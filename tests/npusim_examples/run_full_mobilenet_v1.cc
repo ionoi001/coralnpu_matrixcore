@@ -90,6 +90,9 @@ int main(int argc, char** argv) {
   }
   coralnpu_v2::opt::Memcpy(inference_output, output->data.data, 5);
   printf("Invoke successful\n");
+  printf("input bytes=%d\n", input->bytes);
+  printf("output bytes=%d\n", output->bytes);
+  printf("output type=%d\n", output->type);
   inference_status = 0;
   return 0;
 }

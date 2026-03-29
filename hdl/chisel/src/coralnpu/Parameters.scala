@@ -80,6 +80,18 @@ class Parameters(var m: Seq[MemoryRegion] = Seq(), val hartId: Int = 0) {
   val rvvVlen = 128
   def rvvVlenb: Int = { rvvVlen / 8 }
 
+  // Enable Matrix execution engine (custom small ISA).
+  var enableMatrix = false
+
+  // Matrix MAC array shape (outer-product VDOT style).
+  // Typical values: N=8, M=8, K=4 => N*M*K=256 MACs/cycle.
+  // This is intentionally simple for compiler support (matmul-centric).
+  var matrixN = 8
+  var matrixM = 8
+  var matrixK = 4
+  // Matrix local response shim fixed latency (cycles).
+  var matrixRespLatencyCycles = 1
+
   def useRetirementBuffer: Boolean = { enableVerification }
 
   // Scalar Floating point

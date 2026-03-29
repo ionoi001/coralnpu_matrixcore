@@ -46,10 +46,10 @@ cc_toolchain_config(
     # We still need standard includes, reusing local_config_cc's might be risky if it's GCC specific,
     # but Clang usually plays nice with GCC headers.
     cxx_builtin_include_directories = [
-        "/usr/include/c++/14",
-        "/usr/include/x86_64-linux-gnu/c++/14",
-        "/usr/include/c++/14/backward",
-        "/usr/lib/llvm-19/lib/clang/19/include",
+        "/usr/include/c++/11",
+        "/usr/include/x86_64-linux-gnu/c++/11",
+        "/usr/include/c++/11/backward",
+        "/usr/lib/llvm-14/lib/clang/14.0.0/include",
         "/usr/local/include",
         "/usr/include/x86_64-linux-gnu",
         "/usr/include",

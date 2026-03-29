@@ -128,6 +128,18 @@ class DecodedInstruction(p: Parameters) extends Bundle {
 
   val float = Option.when(p.enableFloat)(Valid(new FloatInstruction()))
 
+  // ---------------------------------------------------------------------------
+  // Matrix custom ISA (small)
+  // Encoding: custom-2 opcode 0x5B (see BitPat below; matches tests/tools).
+  // - SET_C : set C base pointer for matrix stores
+  // - MAC   : clear+compute one tile
+  // - MAC_ACC: accumulate one tile over existing matrix accumulator state
+  val msetc = Bool()
+  val mmac = Bool()
+  val mmacc = Bool()
+
+  def isMatrix(): Bool = { msetc || mmac || mmacc }
+
   def isAluImm(): Bool = {
       addi || slti || sltiu || xori || ori || andi || slli || srli || srai || rori
   }
@@ -165,7 +177,7 @@ class DecodedInstruction(p: Parameters) extends Bundle {
   // Instructions that should dispatch out of slot 0, with no other instructions
   // dispatched on the same cycle.
   def forceSlot0Only(): Bool = {
-    isFency() || isCsr()
+    isFency() || isCsr() || isMatrix()
   }
 
   // Checks if an instruction is a jump or changes context switch. Instructions
@@ -192,11 +204,12 @@ class DecodedInstruction(p: Parameters) extends Bundle {
   def readsRs1(): Bool = {
     isCondBr() || isAluReg() || isAluImm() || isAlu1Bit() || isAlu2Bit() ||
     isCsr() || isMul() || isDvu() || jalr || floatReadsScalarRs1() ||
+    isMatrix() ||
     (if (p.enableRvv) { rvv.get.valid && rvv.get.bits.readsRs1() } else { false.B })
   }
   def readsRs2(): Bool = {
     isCondBr() || isAluReg() || isAlu2Bit() || isScalarStore() || isCsrReg() ||
-    isMul() || isDvu() ||
+    isMul() || isDvu() || mmac || mmacc ||  // MAC/MAC_ACC use rs2 as B base pointer
     (if (p.enableRvv) { rvv.get.valid && rvv.get.bits.readsRs2() } else { false.B })
   }
 
@@ -260,6 +273,14 @@ class Dispatch(p: Parameters) extends Module {
     val lsu = Vec(p.instructionLanes, Decoupled(new LsuCmd(p)))
     val lsuQueueCapacity = Input(UInt(3.W))
 
+    // Matrix interface (tiny custom ISA); operands come from regfile via SCore inputs.
+    val matrixcore = Option.when(p.enableMatrix)(
+        Decoupled(new coralnpu.matrix.MatrixQueuedCmd))
+    val matrixOperandRs1 = Option.when(p.enableMatrix)(Input(UInt(32.W)))
+    val matrixOperandRs2 = Option.when(p.enableMatrix)(Input(UInt(32.W)))
+    val matrixRfRs1Valid = Option.when(p.enableMatrix)(Input(Bool()))
+    val matrixRfRs2Valid = Option.when(p.enableMatrix)(Input(Bool()))
+
     // Multiplier interface.
     val mlu = Vec(p.instructionLanes, Decoupled(new MluCmd))
 
@@ -321,7 +342,7 @@ class DispatchV2(p: Parameters) extends Dispatch(p) {
   // Scalar Scoreboard
   val rdAddr = io.inst.map(_.bits.inst(11,7))
   val writesRd = decodedInsts.map(d =>
-      (!d.isScalarStore() && !d.isCondBr()) ||
+      (!d.isScalarStore() && !d.isCondBr() && !d.isMatrix()) ||
       (d.isFloat() && d.floatWritesRd()) ||
       d.rvvWritesRd()
   )
@@ -505,6 +526,42 @@ class DispatchV2(p: Parameters) extends Dispatch(p) {
   )
 
   // ---------------------------------------------------------------------------
+  // Matrix two-phase issue (slot 0): phase 1 latch op/pc + drive regfile read
+  // under canDispatch(0); phase 2 asserts io.matrixcore.valid when operands
+  // are ready only (matrixFetchPending && matrixRfReady). Do not AND phase-2
+  // valid with canDispatch(0) or clear pending on !io.inst(0).valid — slot0
+  // can bubble or advance while the latched op still must issue.
+  val matrixFetchPending = RegInit(false.B)
+  val matrixLatNeedRs2 = RegInit(false.B)
+  val matrixLatOp = RegInit(coralnpu.matrix.MatrixOp.MAC)
+  val matrixLatPc = Reg(UInt(32.W))
+
+  if (p.enableMatrix) {
+    val matrixRfReady =
+      io.matrixRfRs1Valid.get && (!matrixLatNeedRs2 || io.matrixRfRs2Valid.get)
+    io.matrixcore.get.valid := matrixFetchPending && matrixRfReady
+    io.matrixcore.get.bits.op := matrixLatOp
+    io.matrixcore.get.bits.pc := matrixLatPc
+    io.matrixcore.get.bits.rs1Data := io.matrixOperandRs1.get
+    io.matrixcore.get.bits.rs2Data := io.matrixOperandRs2.get
+
+    when(matrixFetchPending && io.matrixcore.get.fire) {
+      matrixFetchPending := false.B
+    }.elsewhen(!matrixFetchPending && io.inst(0).valid && decodedInsts(0).isMatrix() && canDispatch(0)) {
+      matrixFetchPending := true.B
+      matrixLatPc := io.inst(0).bits.addr
+      matrixLatNeedRs2 := decodedInsts(0).mmac || decodedInsts(0).mmacc
+      matrixLatOp := MuxCase(
+        coralnpu.matrix.MatrixOp.MAC,
+        Seq(
+          decodedInsts(0).msetc -> coralnpu.matrix.MatrixOp.SET_C,
+          decodedInsts(0).mmacc -> coralnpu.matrix.MatrixOp.MAC_ACC,
+        )
+      )
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Try-dispatch loop.
   // Back-pressure from execution units gets applied here
   val lastReady = Wire(Vec(p.instructionLanes + 1, Bool()))
@@ -659,6 +716,9 @@ class DispatchV2(p: Parameters) extends Dispatch(p) {
     }
 
     // -------------------------------------------------------------------------
+    // Matrix: issued after two-phase handshake (see matrixFetchPending above).
+
+    // -------------------------------------------------------------------------
     // Csr
     if (i == 0) {
       val csr = MuxUpTo1H(MakeValid(false.B, CsrOp.CSRRW), Seq(
@@ -709,7 +769,8 @@ class DispatchV2(p: Parameters) extends Dispatch(p) {
     val dispatched = Seq(io.alu(i).fire, io.bru(i).fire, io.mlu(i).fire, io.dvu(i).fire, io.lsu(i).fire) ++
       Option.when(i == 0)(Seq(io.csr.valid, fenceValid)).getOrElse(Seq()) ++
       Option.when(p.enableRvv)(Seq(io.rvv.get(i).fire)).getOrElse(Seq()) ++
-      Option.when(p.enableFloat && i == 0)(Seq(io.float.get.fire)).getOrElse(Seq())
+      Option.when(p.enableFloat && i == 0)(Seq(io.float.get.fire)).getOrElse(Seq()) ++
+      Option.when(p.enableMatrix && i == 0)(Seq(io.matrixcore.get.fire)).getOrElse(Seq())
     lastReady(i + 1) := dispatched.reduce(_||_)
   }
 
@@ -736,9 +797,18 @@ class DispatchV2(p: Parameters) extends Dispatch(p) {
   for (i <- 0 until p.instructionLanes) {
     val d = decodedInsts(i)
     val rs3Addr = io.inst(i).bits.inst(31,27)
-    io.rs1Read(i).valid := io.inst(i).fire && (d.readsRs1() || d.jalr)
+    val extraRs1 =
+      if (p.enableMatrix && i == 0) {
+        matrixFetchPending || (io.inst(0).valid && decodedInsts(0).isMatrix() && d.readsRs1())
+      } else { false.B }
+    val extraRs2 =
+      if (p.enableMatrix && i == 0) {
+        (matrixFetchPending && matrixLatNeedRs2) ||
+          (io.inst(0).valid && decodedInsts(0).isMatrix() && d.readsRs2())
+      } else { false.B }
+    io.rs1Read(i).valid := (io.inst(i).fire && (d.readsRs1() || d.jalr)) || extraRs1
     io.rs1Read(i).addr := Mux(io.inst(i).bits.inst(0), rs1Addr(i), rs3Addr(i))
-    io.rs2Read(i).valid := io.inst(i).fire && d.readsRs2()
+    io.rs2Read(i).valid := (io.inst(i).fire && d.readsRs2()) || extraRs2
     io.rs2Read(i).addr := io.inst(i).bits.inst(24,20)
 
     // Set immediates
@@ -889,6 +959,23 @@ object DecodeInstruction {
     d.flushat  := op === BitPat("b0010?_??_00000_?????_000_00000_11101_11") && op(19,15) =/= 0.U
     d.flushall := op === BitPat("b0010?_??_00000_00000_000_00000_11101_11")
 
+    // -------------------------------------------------------------------------
+    // Matrix custom ISA (custom-2 opcode = 0x5B)
+    // We keep it deliberately small:
+    // - MSETC: I-type-like encoding, funct3=000, opcode=1011011
+    //          uses rs1 as C base pointer (rs2 ignored)
+    // - MAC    : R-type-like encoding, funct3=001, opcode=1011011 (clear+compute)
+    // - MAC_ACC: R-type-like encoding, funct3=010, opcode=1011011 (accumulate)
+    //          rs1 = A base pointer, rs2 = B base pointer
+    //          C base pointer comes from last MSETC
+    //
+    // All matrix ops are forced to dispatch from slot0 only by virtue of
+    // being treated as LSU ops (and we will also add a slot0-only restriction
+    // in dispatch via forceSlot0Only update in a later step if needed).
+    d.msetc := op === BitPat("b????????????_?????_000_?????_1011011")
+    d.mmac  := op === BitPat("b???????_?????_?????_001_?????_1011011")
+    d.mmacc := op === BitPat("b???????_?????_?????_010_?????_1011011")
+
 
     if (p.enableFloat) {
       val float = FloatInstruction.decode(op, addr)
@@ -944,6 +1031,7 @@ object DecodeInstruction {
                       d.rol, d.ror, d.orcb, d.rev8, d.rori,
                       d.ebreak, d.ecall, d.wfi,
                       d.mpause, d.mret, d.fencei, d.flushat, d.flushall,
+                      d.msetc, d.mmac, d.mmacc,
                       d.rvv.map(_.valid).getOrElse(false.B),
                       d.float.map(_.valid).getOrElse(false.B))
 

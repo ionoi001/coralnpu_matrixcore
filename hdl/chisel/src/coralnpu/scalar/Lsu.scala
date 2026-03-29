@@ -927,30 +927,51 @@ class LsuV2(p: Parameters) extends Lsu(p) {
   io.ibus.valid := loadUpdatedSlot.activeTransaction() && itcm && !slot.store && !faultReg.valid
   io.ibus.addr := targetLineAddr
 
-  // dbus data path
-  io.dbus.valid := dtcm && Mux(slot.store,
-                               slot.activeTransaction(),
-                               loadUpdatedSlot.activeTransaction()) && !faultReg.valid
-  io.dbus.write := slot.store
-  io.dbus.pc := slot.pc
-  io.dbus.addr := targetLineAddr
-  io.dbus.adrx := targetLineAddr
-  io.dbus.size := opSize
-  io.dbus.wdata := Cat(wdata.reverse)
-  io.dbus.wmask := Cat(wmask.reverse)
+  // dbus data path (slot pipeline)
+  val slot_dbus_valid = dtcm && Mux(slot.store,
+                                   slot.activeTransaction(),
+                                   loadUpdatedSlot.activeTransaction()) && !faultReg.valid
+  val slot_dbus_write = slot.store
+  val slot_dbus_pc = slot.pc
+  val slot_dbus_addr = targetLineAddr
+  val slot_dbus_adrx = targetLineAddr
+  val slot_dbus_size = opSize
+  val slot_dbus_wdata = Cat(wdata.reverse)
+  val slot_dbus_wmask = Cat(wmask.reverse)
 
-  // ebus data path
-  io.ebus.dbus.valid := (external || peri) && Mux(slot.store,
+  // ebus data path (slot pipeline)
+  val slot_ebus_valid = (external || peri) && Mux(slot.store,
                                                   slot.activeTransaction(),
                                                   loadUpdatedSlot.activeTransaction()) && !faultReg.valid
-  io.ebus.dbus.write := slot.store
-  io.ebus.dbus.addr := alignedAddress
-  io.ebus.dbus.adrx := targetLineAddr
-  io.ebus.dbus.size := opSize
-  io.ebus.dbus.wdata := Cat(wdata.reverse)
-  io.ebus.dbus.wmask := Cat(wmask.reverse)
-  io.ebus.dbus.pc := slot.pc
-  io.ebus.internal := peri
+  val slot_ebus_write = slot.store
+  val slot_ebus_addr = alignedAddress
+  val slot_ebus_adrx = targetLineAddr
+  val slot_ebus_size = opSize
+  val slot_ebus_wdata = Cat(wdata.reverse)
+  val slot_ebus_wmask = Cat(wmask.reverse)
+  val slot_ebus_pc = slot.pc
+  val slot_ebus_internal = peri
+
+  // dbus data path
+  io.dbus.valid := slot_dbus_valid
+  io.dbus.write := slot_dbus_write
+  io.dbus.pc := slot_dbus_pc
+  io.dbus.addr := slot_dbus_addr
+  io.dbus.adrx := slot_dbus_adrx
+  io.dbus.size := slot_dbus_size
+  io.dbus.wdata := slot_dbus_wdata
+  io.dbus.wmask := slot_dbus_wmask
+
+  // ebus data path
+  io.ebus.dbus.valid := slot_ebus_valid
+  io.ebus.dbus.write := slot_ebus_write
+  io.ebus.dbus.addr := slot_ebus_addr
+  io.ebus.dbus.adrx := slot_ebus_adrx
+  io.ebus.dbus.size := slot_ebus_size
+  io.ebus.dbus.wdata := slot_ebus_wdata
+  io.ebus.dbus.wmask := slot_ebus_wmask
+  io.ebus.dbus.pc := slot_ebus_pc
+  io.ebus.internal := slot_ebus_internal
 
   val ibusFired = io.ibus.valid && io.ibus.ready
   val dbusFired = io.dbus.valid && io.dbus.ready
@@ -965,6 +986,8 @@ class LsuV2(p: Parameters) extends Lsu(p) {
       (dbusFired && !io.dbus.write) -> LsuRead(LsuBus.DBUS, targetLine.bits),
       (ebusFired && !io.ebus.dbus.write) -> LsuRead(LsuBus.EXTERNAL, targetLine.bits),
     )))
+
+  // Matrix FSM is fully contained inside `matrixCore`.
 
   // Fault handling
   val ibusFault = Wire(Valid(new FaultInfo(p)))

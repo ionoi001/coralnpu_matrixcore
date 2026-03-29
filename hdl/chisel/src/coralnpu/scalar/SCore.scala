@@ -21,6 +21,7 @@ import chisel3.util._
 import common._
 import coralnpu.float.{FloatCore}
 import coralnpu.rvv.{RvvCoreIO}
+import coralnpu.matrix.{MatrixCore, MatrixDbusRespShim}
 import _root_.circt.stage.ChiselStage
 
 object SCore {
@@ -37,6 +38,7 @@ class SCore(p: Parameters) extends Module {
     val wfi = Output(Bool())
     val irq = Input(Bool())
     val dm = new CoreDMIO(p)
+    val timer_irq = Input(Bool())
 
     val ibus = new IBusIO(p)
     val dbus = new DBusIO(p)
@@ -58,6 +60,9 @@ class SCore(p: Parameters) extends Module {
   val dispatch = Module(new DispatchV2(p))
 
   val lsu = Lsu(p)
+  val matrixcore = Option.when(p.enableMatrix)(Module(new MatrixCore(p)))
+  val matrixRespShim = Option.when(p.enableMatrix)(Module(new MatrixDbusRespShim(p)))
+  
   val fault_manager = Module(new FaultManager(p))
   val retirement_buffer = Module(new RetirementBuffer(p, mini = !p.useRetirementBuffer))
   val rob_io = retirement_buffer.io
@@ -127,12 +132,21 @@ class SCore(p: Parameters) extends Module {
   dispatch.io.inst <> fetch.io.inst.lanes
   dispatch.io.halted := csr.io.halted || csr.io.wfi || csr.io.dm.debug_mode
   dispatch.io.mactive := false.B
-  dispatch.io.lsuActive := lsu.io.active
+  dispatch.io.lsuActive := lsu.io.active || matrixcore.map(_.io.active).getOrElse(false.B)
   dispatch.io.lsuQueueCapacity := lsu.io.queueCapacity
   dispatch.io.scoreboard.comb := regfile.io.scoreboard.comb
   dispatch.io.scoreboard.regd := regfile.io.scoreboard.regd
   dispatch.io.branchTaken := branchTaken
   dispatch.io.interlock := bru(0).io.interlock.get || lsu.io.flush.valid
+
+  // Matrix dispatch (slot0 only): operands are read in EXE and bundled into MatrixQueuedCmd.
+  if (p.enableMatrix) {
+    dispatch.io.matrixcore.get <> matrixcore.get.io.inst
+    dispatch.io.matrixOperandRs1.get := regfile.io.readData(0).data
+    dispatch.io.matrixOperandRs2.get := regfile.io.readData(1).data
+    dispatch.io.matrixRfRs1Valid.get := regfile.io.readData(0).valid
+    dispatch.io.matrixRfRs2Valid.get := regfile.io.readData(1).valid
+  }
 
   // Connect fault signaling to FaultManager.
   for (i <- 0 until p.instructionLanes) {
@@ -228,6 +242,7 @@ class SCore(p: Parameters) extends Module {
   io.fault  := csr.io.fault
   io.wfi    := csr.io.wfi
   csr.io.irq := io.irq
+  csr.io.timer_irq := io.timer_irq
 
   // ---------------------------------------------------------------------------
   // Load/Store Unit
@@ -465,7 +480,37 @@ class SCore(p: Parameters) extends Module {
 
   // ---------------------------------------------------------------------------
   // Local Data Bus Port
-  io.dbus <> lsu.io.dbus
+  if (p.enableMatrix) {
+    val useMatrix = matrixcore.get.io.active
+
+    io.dbus.valid := Mux(useMatrix, matrixcore.get.io.dbus.valid, lsu.io.dbus.valid)
+    io.dbus.write := Mux(useMatrix, matrixcore.get.io.dbus.write, lsu.io.dbus.write)
+    io.dbus.pc := Mux(useMatrix, matrixcore.get.io.dbus.pc, lsu.io.dbus.pc)
+    io.dbus.addr := Mux(useMatrix, matrixcore.get.io.dbus.addr, lsu.io.dbus.addr)
+    io.dbus.adrx := Mux(useMatrix, matrixcore.get.io.dbus.adrx, lsu.io.dbus.adrx)
+    io.dbus.size := Mux(useMatrix, matrixcore.get.io.dbus.size, lsu.io.dbus.size)
+    io.dbus.wdata := Mux(useMatrix, matrixcore.get.io.dbus.wdata, lsu.io.dbus.wdata)
+    io.dbus.wmask := Mux(useMatrix, matrixcore.get.io.dbus.wmask, lsu.io.dbus.wmask)
+
+    lsu.io.dbus.ready := Mux(useMatrix, false.B, io.dbus.ready)
+    matrixcore.get.io.dbus.ready := Mux(useMatrix, io.dbus.ready, false.B)
+    lsu.io.dbus.rdata := io.dbus.rdata
+    matrixcore.get.io.dbus.rdata := io.dbus.rdata
+
+    // Matrix-local response shim:
+    // - request side already arbitrated onto io.dbus
+    // - response side is explicit valid/data into matrixcore
+    // This shim currently provides a fixed-latency valid pulse (configured by
+    // p.matrixRespLatencyCycles), and can be replaced by a real harness path.
+    matrixRespShim.get.io.useMatrix := useMatrix
+    matrixRespShim.get.io.dbusValid := io.dbus.valid
+    matrixRespShim.get.io.dbusReady := io.dbus.ready
+    matrixRespShim.get.io.dbusWrite := io.dbus.write
+    matrixRespShim.get.io.dbusRdata := io.dbus.rdata
+    matrixcore.get.io.dbusResp := matrixRespShim.get.io.resp
+  } else {
+    io.dbus <> lsu.io.dbus
+  }
   io.ebus <> lsu.io.ebus
 
   // ---------------------------------------------------------------------------

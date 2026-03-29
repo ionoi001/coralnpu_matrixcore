@@ -182,6 +182,21 @@ chisel_library(
     ],
 )
 
+chisel_library(
+    name = "coralnpu_matrix",
+    srcs = [
+        "matrix/MatrixCoreInterface.scala",
+        "matrix/MatrixDma.scala",
+        "matrix/MatrixDbusRespShim.scala",
+        "matrix/MatrixBackend.scala",
+        "matrix/MatrixCore.scala",
+        "matrix/MatrixEngine.scala",
+    ],
+    deps = [
+        ":coralnpu_base",
+    ],
+)
+
 chisel_test(
     name = "coralnpu_rvv_tests",
     srcs = [
@@ -192,6 +207,36 @@ chisel_test(
     ],
     deps = [
         ":coralnpu_rvv",
+        "//hdl/chisel/src/common:testing",
+    ],
+)
+
+chisel_test(
+    name = "coralnpu_matrix_tests",
+    size = "medium",
+    srcs = [
+        "matrix/MatrixEngineTest.scala",
+        "matrix/MatrixBackendTest.scala",
+    ],
+    args = [
+        "-P",  # Allows parallel tests.
+    ],
+    deps = [
+        ":coralnpu_base",
+        ":coralnpu_matrix",
+    ],
+)
+
+chisel_test(
+    name = "coralnpu_score_matrix_harness_tests",
+    size = "large",
+    srcs = [
+        "scalar/SCoreMatrixHarnessTest.scala",
+    ],
+    # No -P: ChiselSim/svsim is not safe for parallel tests in one suite (port ID collisions).
+    deps = [
+        ":coralnpu_base",
+        ":coralnpu_scalar",
         "//hdl/chisel/src/common:testing",
     ],
 )
@@ -317,6 +362,7 @@ chisel_library(
         ":CoralNPUScmInfo",
         ":coralnpu_base",
         ":coralnpu_float",
+        ":coralnpu_matrix",
         ":coralnpu_rvv",
         ":retirement_buffer",
         ":rvvi_trace",
