@@ -69,5 +69,7 @@ class MatrixCoreIO(dataBits: Int) extends Bundle {
   val cmd = Flipped(Decoupled(new MatrixCmd))
   val mem = new MatrixMemIO(dataBits)
   val busy = Output(Bool())
+  /** One-cycle pulse when a MAC/MAC_ACC has finished all C writeback beats (PC of the op). */
+  val cmdComplete = Output(Valid(UInt(32.W)))
 }
 

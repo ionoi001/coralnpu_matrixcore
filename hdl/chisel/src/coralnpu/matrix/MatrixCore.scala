@@ -30,6 +30,8 @@ class MatrixCore(p: Parameters) extends Module {
     val dbus = new DBusIO(p)
     val dbusResp = Flipped(Valid(new MatrixMemResp(p.lsuDataBits)))
     val active = Output(Bool())
+    /** Retire / fence ordering: pulses with PC when SET_C or MAC/MAC_ACC is architecturally done. */
+    val matrixComplete = Output(Valid(UInt(32.W)))
   })
 
   val cBaseReg = RegInit(0.U(32.W))
@@ -39,8 +41,6 @@ class MatrixCore(p: Parameters) extends Module {
 
   val backend = Module(new MatrixBackend(p))
 
-  io.active := backend.io.busy || q.io.deq.valid
-
   backend.io.cmd.valid := false.B
   backend.io.cmd.bits := 0.U.asTypeOf(new MatrixCmd)
 
@@ -48,6 +48,12 @@ class MatrixCore(p: Parameters) extends Module {
   val canLaunch = q.io.deq.valid && (isSetC || backend.io.cmd.ready)
 
   q.io.deq.ready := canLaunch
+
+  io.active := backend.io.busy || (q.io.count =/= 0.U)
+
+  val setCThisCycle = canLaunch && isSetC
+  io.matrixComplete.valid := setCThisCycle || backend.io.cmdComplete.valid
+  io.matrixComplete.bits := Mux(setCThisCycle, q.io.deq.bits.pc, backend.io.cmdComplete.bits)
 
   when(canLaunch) {
     when(isSetC) {

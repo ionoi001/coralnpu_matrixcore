@@ -310,4 +310,7 @@ class MatrixBackend(p: coralnpu.Parameters) extends Module {
       writeBeatIdx := writeBeatIdx + 1.U
     }
   }
+
+  io.cmdComplete.valid := memWriteFire && (writeBeatIdx === (cWriteBeats - 1).U)
+  io.cmdComplete.bits := curPc
 }

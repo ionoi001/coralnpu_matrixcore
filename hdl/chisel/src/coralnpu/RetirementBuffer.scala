@@ -25,6 +25,7 @@ class RetirementBufferIO(p: Parameters) extends Bundle {
   val jump = Input(Vec(p.instructionLanes, Bool()))
   val branch = Input(Vec(p.instructionLanes, Bool()))
   val storeComplete = Input(Valid(UInt(32.W)))
+  val matrixComplete = Input(Valid(UInt(32.W)))
   val writeAddrScalar = Input(Vec(p.instructionLanes, new RegfileWriteAddrIO))
   val writeDataScalar = Input(Vec(p.instructionLanes + 2, Valid(new RegfileWriteDataIO)))
   val writeAddrFloat = Option.when(p.enableFloat)(Input(new RegfileWriteAddrIO))
@@ -54,6 +55,7 @@ class RetirementBuffer(p: Parameters, mini: Boolean = false) extends Module {
   val idxWidth = p.retirementBufferIdxWidth
   val noWriteRegIdx = ~0.U(idxWidth.W)
   val storeRegIdx = (noWriteRegIdx - 1.U)
+  val matrixRegIdx = (storeRegIdx - 1.U)
   class Instruction extends Bundle {
     val addr = UInt(32.W) // Program counter address
     val inst = if (mini) UInt(0.W) else UInt(32.W) // Instruction bits
@@ -69,6 +71,7 @@ class RetirementBuffer(p: Parameters, mini: Boolean = false) extends Module {
   }
 
   val storeComplete = Pipe(io.storeComplete)
+  val matrixComplete = Pipe(io.matrixComplete)
 
   val bufferSize = p.retirementBufferSize
   assert(bufferSize >= p.instructionLanes)
@@ -131,6 +134,7 @@ class RetirementBuffer(p: Parameters, mini: Boolean = false) extends Module {
                       (width === "b000".U || width === "b101".U ||
                        width === "b110".U || width === "b111".U)
     val store = scalarStore || floatStore || vectorStore
+    val matrixInst = p.enableMatrix.B && (finst.inst(6, 0) === 0x5b.U)
 
     val instr = Wire(new Instruction)
     instr.addr := finst.addr
@@ -139,6 +143,7 @@ class RetirementBuffer(p: Parameters, mini: Boolean = false) extends Module {
       floatValid -> (fAddr +& p.floatRegfileBaseAddr.U),
       (vectorValid) -> (vAddr +& p.rvvRegfileBaseAddr.U),
       (sValid && sAddr =/= 0.U) -> sAddr,
+      matrixInst -> matrixRegIdx,
       store -> storeRegIdx,
     ))
     instr.trap := isFault
@@ -270,6 +275,7 @@ class RetirementBuffer(p: Parameters, mini: Boolean = false) extends Module {
     // Check if this entry is an operation that doesn't require a register write, but is not a store.
     val nonWritingInstr = bufferEntry.idx === noWriteRegIdx
     val storeInstr = bufferEntry.idx === storeRegIdx
+    val matrixInstr = p.enableMatrix.B && (bufferEntry.idx === matrixRegIdx)
     // Check if this entry is the faulting instruction
     val faultingInstr = io.fault.valid && (bufferEntry.addr === faultPc)
     // The entry is active if it's validly enqueued.
@@ -324,7 +330,7 @@ class RetirementBuffer(p: Parameters, mini: Boolean = false) extends Module {
     // If the entry is active and its data dependency is met (or it has no dependency)...
     // Special care here for vector, as multiple instructions are allowed to be dispatched for the same destination register.
     // This differs from how the scalar/float scoreboards restrict dispatch.
-    val dataReady = (scalarWriteIdxMap.reduce(_|_) || floatWriteIdxMap.reduce(_|_) || vectorReady || nonWritingInstr || (storeInstr && storeComplete.valid && storeComplete.bits === bufferEntry.addr))
+    val dataReady = (scalarWriteIdxMap.reduce(_|_) || floatWriteIdxMap.reduce(_|_) || vectorReady || nonWritingInstr || (storeInstr && storeComplete.valid && storeComplete.bits === bufferEntry.addr) || (matrixInstr && matrixComplete.valid && matrixComplete.bits === bufferEntry.addr))
     val isControlFlow = bufferEntry.isControlFlow
     val isBranch = bufferEntry.isBranch
     // For the last entry in the buffer, we can't see the next instruction yet (it hasn't been enqueued or wrapped visibly).

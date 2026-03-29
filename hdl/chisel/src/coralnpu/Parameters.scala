@@ -84,7 +84,7 @@ class Parameters(var m: Seq[MemoryRegion] = Seq(), val hartId: Int = 0) {
   var enableMatrix = false
 
   // Matrix MAC array shape (outer-product VDOT style).
-  // Typical values: N=8, M=8, K=4 => N*M*K=256 MACs/cycle.
+  // Typical values: N=8, M=8, K=4 => N*M*K=256 MACs/cycle. K is configurable.
   // This is intentionally simple for compiler support (matmul-centric).
   var matrixN = 8
   var matrixM = 8

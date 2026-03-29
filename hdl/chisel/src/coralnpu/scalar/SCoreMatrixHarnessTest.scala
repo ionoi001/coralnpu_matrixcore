@@ -66,6 +66,26 @@ class SCoreMatrixHarnessSpec extends AnyFreeSpec with ChiselSim {
 
   private def instFenceI: Int = 0x0000100f
 
+  /** addi rd, rs1, imm12 (I-type, funct3=000) */
+  private def instAddi(rd: Int, rs1: Int, imm: Int): Int = {
+    val imm12 = imm & 0xfff
+    (imm12 << 20) | (rs1 << 15) | (0 << 12) | (rd << 7) | 0x13
+  }
+
+  /** lw rd, imm(rs1) */
+  private def instLw(rd: Int, rs1: Int, imm: Int): Int = {
+    val imm12 = imm & 0xfff
+    (imm12 << 20) | (rs1 << 15) | (2 << 12) | (rd << 7) | 0x03
+  }
+
+  /** sw rs2, imm(rs1) */
+  private def instSw(rs2: Int, rs1: Int, imm: Int): Int = {
+    val imm12 = imm & 0xfff
+    val imm31_25 = (imm12 >> 5) & 0x7f
+    val imm4_0 = imm12 & 0x1f
+    (imm31_25 << 25) | (rs2 << 20) | (rs1 << 15) | (2 << 12) | (imm4_0 << 7) | 0x23
+  }
+
   /** jal x0, 0: infinite loop */
   private def instJalX0: Int = 0x0000006f
 
@@ -108,6 +128,22 @@ class SCoreMatrixHarnessSpec extends AnyFreeSpec with ChiselSim {
     v
   }
 
+  /** Apply a DBus store beat to the byte-level memory model (scalar SW + matrix writeback). */
+  private def dmemApplyWrite(
+      dmem: scala.collection.mutable.Map[BigInt, Int],
+      addr: BigInt,
+      wdata: BigInt,
+      wmask: BigInt,
+      beatBytes: Int,
+  ): Unit = {
+    for (i <- 0 until beatBytes) {
+      if (((wmask >> i) & 1) == 1) {
+        val byte = ((wdata >> (8 * i)) & 0xff).toInt
+        dmem(addr + i) = byte
+      }
+    }
+  }
+
   private def applyReset(dut: SCore): Unit = {
     dut.reset.poke(true.B)
     dut.clock.step()
@@ -143,83 +179,83 @@ class SCoreMatrixHarnessSpec extends AnyFreeSpec with ChiselSim {
     }
   }
 
-  // "Case1 SET_C + MAC writes expected C via full core path" in {
-  //   val p = mkParams()
-  //   val beatBytes = p.lsuDataBits / 8
-  //   val aBase = 0x10000
-  //   val bBase = 0x11000
-  //   val cBase = 0x12000
+  "Case1 SET_C + MAC writes expected C via full core path" in {
+    val p = mkParams()
+    val beatBytes = p.lsuDataBits / 8
+    val aBase = 0x10000
+    val bBase = 0x11000
+    val cBase = 0x12000
 
-  //   val xA = 10
-  //   val xB = 11
-  //   val xC = 12
+    val xA = 10
+    val xB = 11
+    val xC = 12
 
-  //   val prog = Array(
-  //     lui(xA, 0x10),
-  //     lui(xB, 0x11),
-  //     lui(xC, 0x12),
-  //     instSetC(xC),
-  //     instMac(xA, xB),
-  //     instJalX0,
-  //   )
+    val prog = Array(
+      lui(xA, 0x10),
+      lui(xB, 0x11),
+      lui(xC, 0x12),
+      instSetC(xC),
+      instMac(xA, xB),
+      instJalX0,
+    )
 
-  //   val aBytes = Seq(1, 2, 3, 4, 5, 6, 7, 8)
-  //   val bBytes = Seq(1, 2, 3, 4, 5, 6, 7, 8)
-  //   val cWords = Seq(50, 60, 114, 140)
-  //   val expectedC = packBytesLE(int32sToBytesLE(cWords), beatBytes)
+    val aBytes = Seq(1, 2, 3, 4, 5, 6, 7, 8)
+    val bBytes = Seq(1, 2, 3, 4, 5, 6, 7, 8)
+    val cWords = Seq(50, 60, 114, 140)
+    val expectedC = packBytesLE(int32sToBytesLE(cWords), beatBytes)
 
-  //   val dmem = scala.collection.mutable.Map[BigInt, Int]().withDefaultValue(0)
-  //   for ((b, i) <- aBytes.zipWithIndex) { dmem(BigInt(aBase + i)) = b }
-  //   for ((b, i) <- bBytes.zipWithIndex) { dmem(BigInt(bBase + i)) = b }
+    val dmem = scala.collection.mutable.Map[BigInt, Int]().withDefaultValue(0)
+    for ((b, i) <- aBytes.zipWithIndex) { dmem(BigInt(aBase + i)) = b }
+    for ((b, i) <- bBytes.zipWithIndex) { dmem(BigInt(bBase + i)) = b }
 
-  //   val resetPc = 0
-  //   val imemBase = 0
+    val resetPc = 0
+    val imemBase = 0
 
-  //   simulate(new SCore(p)) { dut =>
-  //     applyReset(dut)
-  //     tieOffMinimal(dut, p)
-  //     dut.io.csr.in.value(0).poke((resetPc & 0xffffffffL).U)
+    simulate(new SCore(p)) { dut =>
+      applyReset(dut)
+      tieOffMinimal(dut, p)
+      dut.io.csr.in.value(0).poke((resetPc & 0xffffffffL).U)
 
-  //     var sawCWrite = false
-  //     var lastWriteAddr = BigInt(0)
-  //     var lastWriteData = BigInt(0)
+      var sawCWrite = false
+      var lastWriteAddr = BigInt(0)
+      var lastWriteData = BigInt(0)
 
-  //     for (_ <- 0 until 5000) {
-  //       val ibAddr = dut.io.ibus.addr.peek().litValue
-  //       dut.io.ibus.fault.valid.poke(false.B)
-  //       dut.io.ebus.fault.valid.poke(false.B)
-  //       if (dut.io.ibus.valid.peek().litToBoolean) {
-  //         dut.io.ibus.ready.poke(true.B)
-  //         dut.io.ibus.rdata.poke(imemLine(prog, imemBase, ibAddr.toInt).U(p.fetchDataBits.W))
-  //       } else {
-  //         dut.io.ibus.ready.poke(false.B)
-  //       }
+      for (_ <- 0 until 5000) {
+        val ibAddr = dut.io.ibus.addr.peek().litValue
+        dut.io.ibus.fault.valid.poke(false.B)
+        dut.io.ebus.fault.valid.poke(false.B)
+        if (dut.io.ibus.valid.peek().litToBoolean) {
+          dut.io.ibus.ready.poke(true.B)
+          dut.io.ibus.rdata.poke(imemLine(prog, imemBase, ibAddr.toInt).U(p.fetchDataBits.W))
+        } else {
+          dut.io.ibus.ready.poke(false.B)
+        }
 
-  //       val dbusReadAddr = dut.io.dbus.addr.peek().litValue
-  //       dut.io.dbus.rdata.poke(dmemLoad128(dmem, dbusReadAddr, beatBytes).U(p.lsuDataBits.W))
+        val dbusReadAddr = dut.io.dbus.addr.peek().litValue
+        dut.io.dbus.rdata.poke(dmemLoad128(dmem, dbusReadAddr, beatBytes).U(p.lsuDataBits.W))
 
-  //       dut.io.dbus.ready.poke(true.B)
+        dut.io.dbus.ready.poke(true.B)
 
-  //       if (dut.io.dbus.valid.peek().litToBoolean && dut.io.dbus.ready.peek().litToBoolean) {
-  //         if (dut.io.dbus.write.peek().litToBoolean) {
-  //           val addr = dut.io.dbus.addr.peek().litValue
-  //           val wdata = dut.io.dbus.wdata.peek().litValue
-  //           if (addr == BigInt(cBase)) {
-  //             sawCWrite = true
-  //             lastWriteAddr = addr
-  //             lastWriteData = wdata
-  //           }
-  //         }
-  //       }
+        if (dut.io.dbus.valid.peek().litToBoolean && dut.io.dbus.ready.peek().litToBoolean) {
+          if (dut.io.dbus.write.peek().litToBoolean) {
+            val addr = dut.io.dbus.addr.peek().litValue
+            val wdata = dut.io.dbus.wdata.peek().litValue
+            if (addr == BigInt(cBase)) {
+              sawCWrite = true
+              lastWriteAddr = addr
+              lastWriteData = wdata
+            }
+          }
+        }
 
-  //       dut.clock.step()
-  //     }
+        dut.clock.step()
+      }
 
-  //     assert(sawCWrite, "expected matrix writeback to C base")
-  //     assert(lastWriteAddr == BigInt(cBase), s"C write addr: 0x${lastWriteAddr.toString(16)}")
-  //     assert(lastWriteData == expectedC, s"C wdata: got 0x${lastWriteData.toString(16)} exp 0x${expectedC.toString(16)}")
-  //   }
-  // }
+      assert(sawCWrite, "expected matrix writeback to C base")
+      assert(lastWriteAddr == BigInt(cBase), s"C write addr: 0x${lastWriteAddr.toString(16)}")
+      assert(lastWriteData == expectedC, s"C wdata: got 0x${lastWriteData.toString(16)} exp 0x${expectedC.toString(16)}")
+    }
+  }
 
   "Case2 SET_C + MAC + MAC_ACC accumulates (program-level)" in {
     val p = mkParams()
@@ -381,6 +417,221 @@ class SCoreMatrixHarnessSpec extends AnyFreeSpec with ChiselSim {
       assert(sawFenceAtSlot0, "FENCE.I should reach slot0 decode")
       assert(sawCWrite, "expected C writeback (matrix finished)")
       assert(!fenceFiredBeforeCWrite, "FENCE.I must not dispatch until matrix completes (lsuActive interlock)")
+    }
+  }
+
+  /**
+    * Two independent SET_C; MAC pairs with disjoint A/B/C regions — verifies cBaseReg / backend
+    * do not leak the first tile into the second (queue + cur/next + writeback).
+    *
+    * Block0: A@0x10000, B@0x11000, C@0x12000 — same 1..8 / 1..8 pattern as Case1 (expected E0).
+    * Block1: A@0x13000, B@0x14000, C@0x15000 — all A=2, all B=3 => C tile 24,24,24,24 (E1).
+    */
+  "Case4 two disjoint SET_C+MAC sequences: correct C per block, no cross-tile state" in {
+    val p = mkParams()
+    val beatBytes = p.lsuDataBits / 8
+    val a0 = 0x10000
+    val b0 = 0x11000
+    val c0 = 0x12000
+    val a1 = 0x13000
+    val b1 = 0x14000
+    val c1 = 0x15000
+
+    val xA = 10
+    val xB = 11
+    val xC = 12
+
+    val prog = Array(
+      lui(xA, 0x10),
+      lui(xB, 0x11),
+      lui(xC, 0x12),
+      instSetC(xC),
+      instMac(xA, xB),
+      lui(xA, 0x13),
+      lui(xB, 0x14),
+      lui(xC, 0x15),
+      instSetC(xC),
+      instMac(xA, xB),
+      instJalX0,
+    )
+
+    val a0Bytes = Seq(1, 2, 3, 4, 5, 6, 7, 8)
+    val b0Bytes = Seq(1, 2, 3, 4, 5, 6, 7, 8)
+    val c0Words = Seq(50, 60, 114, 140)
+    val expectedC0 = packBytesLE(int32sToBytesLE(c0Words), beatBytes)
+
+    val a1Bytes = Seq.fill(8)(2)
+    val b1Bytes = Seq.fill(8)(3)
+    val c1Words = Seq(24, 24, 24, 24)
+    val expectedC1 = packBytesLE(int32sToBytesLE(c1Words), beatBytes)
+
+    val dmem = scala.collection.mutable.Map[BigInt, Int]().withDefaultValue(0)
+    for ((b, i) <- a0Bytes.zipWithIndex) { dmem(BigInt(a0 + i)) = b }
+    for ((b, i) <- b0Bytes.zipWithIndex) { dmem(BigInt(b0 + i)) = b }
+    for ((b, i) <- a1Bytes.zipWithIndex) { dmem(BigInt(a1 + i)) = b }
+    for ((b, i) <- b1Bytes.zipWithIndex) { dmem(BigInt(b1 + i)) = b }
+
+    val resetPc = 0
+    val imemBase = 0
+
+    simulate(new SCore(p)) { dut =>
+      applyReset(dut)
+      tieOffMinimal(dut, p)
+      dut.io.csr.in.value(0).poke((resetPc & 0xffffffffL).U)
+
+      var sawWriteC0 = false
+      var sawWriteC1 = false
+      var lastWdataC0 = BigInt(0)
+      var lastWdataC1 = BigInt(0)
+      var sawWrongC1 = false
+
+      for (_ <- 0 until 12000) {
+        val ibAddr = dut.io.ibus.addr.peek().litValue
+        dut.io.ibus.fault.valid.poke(false.B)
+        dut.io.ebus.fault.valid.poke(false.B)
+        if (dut.io.ibus.valid.peek().litToBoolean) {
+          dut.io.ibus.ready.poke(true.B)
+          dut.io.ibus.rdata.poke(imemLine(prog, imemBase, ibAddr.toInt).U(p.fetchDataBits.W))
+        } else {
+          dut.io.ibus.ready.poke(false.B)
+        }
+
+        val dbusReadAddr = dut.io.dbus.addr.peek().litValue
+        dut.io.dbus.rdata.poke(dmemLoad128(dmem, dbusReadAddr, beatBytes).U(p.lsuDataBits.W))
+        dut.io.dbus.ready.poke(true.B)
+
+        if (dut.io.dbus.valid.peek().litToBoolean && dut.io.dbus.ready.peek().litToBoolean) {
+          if (dut.io.dbus.write.peek().litToBoolean) {
+            val addr = dut.io.dbus.addr.peek().litValue
+            val wdata = dut.io.dbus.wdata.peek().litValue
+            val wmask = dut.io.dbus.wmask.peek().litValue
+            dmemApplyWrite(dmem, addr, wdata, wmask, beatBytes)
+            if (addr == BigInt(c0)) {
+              sawWriteC0 = true
+              lastWdataC0 = wdata
+            }
+            if (addr == BigInt(c1)) {
+              if (wdata == expectedC0) {
+                sawWrongC1 = true
+              }
+              sawWriteC1 = true
+              lastWdataC1 = wdata
+            }
+          }
+        }
+
+        dut.clock.step()
+      }
+
+      assert(sawWriteC0, "expected at least one matrix write to cBase0")
+      assert(sawWriteC1, "expected at least one matrix write to cBase1")
+      assert(lastWdataC0 == expectedC0, s"cBase0 final C beat: got 0x${lastWdataC0.toString(16)} exp 0x${expectedC0.toString(16)}")
+      assert(lastWdataC1 == expectedC1, s"cBase1 final C beat: got 0x${lastWdataC1.toString(16)} exp 0x${expectedC1.toString(16)}")
+      assert(!sawWrongC1, "C base1 must not see first block's expected tile data (state leak)")
+    }
+  }
+
+  /**
+    * Scalar lw/sw around SET_C+MAC: DBus arbitration (`useMatrix` vs LSU) must not drop or reorder
+    * scalar traffic vs matrix traffic.
+    */
+  "Case5 scalar lw/sw bracketing SET_C+MAC: scratch memory + matrix C both correct" in {
+    val p = mkParams()
+    val beatBytes = p.lsuDataBits / 8
+    val scratch = 0x20000
+    val aBase = 0x10000
+    val bBase = 0x11000
+    val cBase = 0x12000
+
+    val xPtr = 5
+    val xVal = 6
+    val xLd = 7
+    val xA = 10
+    val xB = 11
+    val xC = 12
+
+    val prog = Array(
+      lui(xPtr, 0x20),
+      instAddi(xVal, 0, 0x42),
+      instSw(xVal, xPtr, 0),
+      lui(xA, 0x10),
+      lui(xB, 0x11),
+      lui(xC, 0x12),
+      instSetC(xC),
+      instMac(xA, xB),
+      instLw(xLd, xPtr, 0),
+      instJalX0,
+    )
+
+    val aBytes = Seq(1, 2, 3, 4, 5, 6, 7, 8)
+    val bBytes = Seq(1, 2, 3, 4, 5, 6, 7, 8)
+    val cWords = Seq(50, 60, 114, 140)
+    val expectedC = packBytesLE(int32sToBytesLE(cWords), beatBytes)
+
+    val dmem = scala.collection.mutable.Map[BigInt, Int]().withDefaultValue(0)
+    for ((b, i) <- aBytes.zipWithIndex) { dmem(BigInt(aBase + i)) = b }
+    for ((b, i) <- bBytes.zipWithIndex) { dmem(BigInt(bBase + i)) = b }
+
+    val resetPc = 0
+    val imemBase = 0
+
+    simulate(new SCore(p)) { dut =>
+      applyReset(dut)
+      tieOffMinimal(dut, p)
+      dut.io.csr.in.value(0).poke((resetPc & 0xffffffffL).U)
+
+      var sawSwScratch = false
+      var sawCWrite = false
+      var lastCdata = BigInt(0)
+      var dbusReadsToScratch = 0
+
+      for (_ <- 0 until 8000) {
+        val ibAddr = dut.io.ibus.addr.peek().litValue
+        dut.io.ibus.fault.valid.poke(false.B)
+        dut.io.ebus.fault.valid.poke(false.B)
+        if (dut.io.ibus.valid.peek().litToBoolean) {
+          dut.io.ibus.ready.poke(true.B)
+          dut.io.ibus.rdata.poke(imemLine(prog, imemBase, ibAddr.toInt).U(p.fetchDataBits.W))
+        } else {
+          dut.io.ibus.ready.poke(false.B)
+        }
+
+        val dbusReadAddr = dut.io.dbus.addr.peek().litValue
+        dut.io.dbus.rdata.poke(dmemLoad128(dmem, dbusReadAddr, beatBytes).U(p.lsuDataBits.W))
+        dut.io.dbus.ready.poke(true.B)
+
+        if (dut.io.dbus.valid.peek().litToBoolean && dut.io.dbus.ready.peek().litToBoolean) {
+          val isWrite = dut.io.dbus.write.peek().litToBoolean
+          val addr = dut.io.dbus.addr.peek().litValue
+          if (!isWrite && addr == BigInt(scratch)) {
+            dbusReadsToScratch += 1
+          }
+          if (isWrite) {
+            val wdata = dut.io.dbus.wdata.peek().litValue
+            val wmask = dut.io.dbus.wmask.peek().litValue
+            dmemApplyWrite(dmem, addr, wdata, wmask, beatBytes)
+            if (addr == BigInt(scratch)) {
+              sawSwScratch = true
+            }
+            if (addr == BigInt(cBase)) {
+              sawCWrite = true
+              lastCdata = wdata
+            }
+          }
+        }
+
+        dut.clock.step()
+      }
+
+      assert(sawSwScratch, "expected scalar SW to scratch (DBus write)")
+      val scratchWord = dmemLoad128(dmem, BigInt(scratch), beatBytes) & BigInt("ffffffff", 16)
+      assert(
+        scratchWord == BigInt(0x42),
+        s"scratch after SW+MAC+LW model: low 32b got 0x${scratchWord.toString(16)} exp 0x42",
+      )
+      assert(dbusReadsToScratch >= 1, "expected at least one DBus read to scratch (LW)")
+      assert(sawCWrite, "expected matrix writeback to C")
+      assert(lastCdata == expectedC, s"matrix C wdata got 0x${lastCdata.toString(16)}")
     }
   }
 }

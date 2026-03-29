@@ -89,6 +89,11 @@ class SCore(p: Parameters) extends Module {
   }
   rob_io.fault := fault_manager.io.out
   rob_io.storeComplete := lsu.io.storeComplete
+  if (p.enableMatrix) {
+    rob_io.matrixComplete := matrixcore.get.io.matrixComplete
+  } else {
+    rob_io.matrixComplete := MakeInvalid(UInt(32.W))
+  }
 
   dispatch.io.single_step := csr.io.dm.single_step || csr.io.dm.dcsr_step
   dispatch.io.debug_mode := csr.io.dm.debug_mode
@@ -126,13 +131,32 @@ class SCore(p: Parameters) extends Module {
 
   fetch.io.linkPort := regfile.io.linkPort
 
+  // Matrix ops architecturally in-flight: inc on Decoupled fire to MatrixCore, dec on
+  // matrixComplete. Fence interlock (Dispatch lsuActive) uses this, not MatrixCore.io.active,
+  // which can drop between issue and memory completion.
+  val matrixArchInflight = WireInit(false.B)
+  if (p.enableMatrix) {
+    val mc = matrixcore.get
+    val cnt = RegInit(0.U(5.W))
+    val inc = mc.io.inst.fire
+    val dec = mc.io.matrixComplete.valid
+    when(inc && dec) {
+      // issue and complete same cycle: no net change
+    }.elsewhen(inc) {
+      cnt := cnt + 1.U
+    }.elsewhen(dec) {
+      cnt := Mux(cnt === 0.U, 0.U, cnt - 1.U)
+    }
+    matrixArchInflight := cnt =/= 0.U
+  }
+
   // ---------------------------------------------------------------------------
   // Decode
   // Decode/Dispatch
   dispatch.io.inst <> fetch.io.inst.lanes
   dispatch.io.halted := csr.io.halted || csr.io.wfi || csr.io.dm.debug_mode
   dispatch.io.mactive := false.B
-  dispatch.io.lsuActive := lsu.io.active || matrixcore.map(_.io.active).getOrElse(false.B)
+  dispatch.io.lsuActive := lsu.io.active || matrixArchInflight
   dispatch.io.lsuQueueCapacity := lsu.io.queueCapacity
   dispatch.io.scoreboard.comb := regfile.io.scoreboard.comb
   dispatch.io.scoreboard.regd := regfile.io.scoreboard.regd
