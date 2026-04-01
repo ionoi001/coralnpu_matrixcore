@@ -20,6 +20,14 @@ import chisel3.util._
 import bus._
 import common._
 
+/**
+  * AXI-wrapped top for integration (ITCM/DTCM/CSR fabric + AXI masters).
+  *
+  * `irq` → MEIP (external interrupt), registered then `core.io.irq`. CSR `mip.MTIP` is
+  * not driven from a top-level pin (tied 0 in [[Csr]]); add a port again if you wire CLINT.
+  *
+  * `Core.debug_req` is not exposed here; the wrapper drives `core.io.debug_req := true.B`.
+  */
 class CoreAxi(p: Parameters, coreModuleName: String) extends RawModule {
   override val desiredName = coreModuleName + "Axi"
   val memoryRegions = p.m
@@ -30,7 +38,7 @@ class CoreAxi(p: Parameters, coreModuleName: String) extends RawModule {
     // ITCM, DTCM, CSR
     val axi_slave = Flipped(new AxiMasterIO(p.axi2AddrBits, p.axi2DataBits, p.axi2IdBits))
     val axi_master = new AxiMasterIO(p.axi2AddrBits, p.axi2DataBits, p.axi2IdBits)
-    // Core status interrupts
+    // Core status interrupts (see class doc; must match bare [[Core]] connectivity)
     val halted = Output(Bool())
     val fault = Output(Bool())
     val wfi = Output(Bool())
@@ -90,14 +98,18 @@ class CoreAxi(p: Parameters, coreModuleName: String) extends RawModule {
     io.dm.rsp.valid := dm.io.ext.rsp.valid && inflight.io.deq.valid && (rspId === 0.U)
 
     dm.io.ext.rsp.ready := inflight.io.deq.valid && Mux(rspId === 1.U, csr.io.debug.rsp.ready, io.dm.rsp.ready)
-    
+
     val core_reset = Mux(io.te, (!io.aresetn.asBool).asAsyncReset, (csr.io.reset || dm.io.ndmreset).asAsyncReset)
     val core = withClockAndReset(cg.io.clk_o, core_reset) { Core(p, coreModuleName) }
-    cg.io.enable := io.irq || (!csr.io.cg && !core.io.wfi) || dm.io.haltreq(0)
+
+    // Register interrupts at the boundary to break timing paths to ibus.
+    val irq_reg = RegNext(io.irq, false.B)
+
+    cg.io.enable := irq_reg || (!csr.io.cg && !core.io.wfi) || dm.io.haltreq(0)
     io.halted := core.io.halted
     io.fault := core.io.fault
     io.wfi := core.io.wfi
-    core.io.irq := io.irq || dm.io.haltreq(0)
+    core.io.irq := irq_reg || dm.io.haltreq(0)
     csr.io.halted := core.io.halted
     csr.io.fault := core.io.fault
     csr.io.coralnpu_csr := core.io.csr.out

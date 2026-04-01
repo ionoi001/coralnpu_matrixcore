@@ -487,6 +487,115 @@ CORE_MINI_AXI_VOPTS = [
     "-Wno-UNSIGNED",
 ]
 
+# Matrix-enabled core: fixed params in coralnpu.CoralNpuMatrixCoreParameters; SystemVerilog export.
+chisel_cc_library(
+    name = "coralnpu_matrix_core_cc_library",
+    chisel_lib = ":coralnpu",
+    emit_class = "coralnpu.EmitCore",
+    extra_outs = [
+        "VCoralNpuMatrixCore_parameters.h",
+    ],
+    gen_flags = [
+        "--enableFetchL0=False",
+        "--fetchDataBits=128",
+        "--lsuDataBits=128",
+        "--enableRvv=False",
+        "--enableMatrix=True",
+        "--enableFloat=False",
+        "--matrixM=2",
+        "--matrixN=2",
+        "--matrixK=4",
+        "--matrixRespLatencyCycles=1",
+        "--moduleName=CoralNpuMatrixCore",
+    ],
+    module_name = "CoralNpuMatrixCore",
+    verilog_file_path = "CoralNpuMatrixCore.sv",
+)
+
+chisel_cc_library(
+    name = "coralnpu_matrix_core_axi_cc_library",
+    chisel_lib = ":coralnpu",
+    emit_class = "coralnpu.EmitCore",
+    extra_outs = [
+        "VCoralNpuMatrixCoreAxi_parameters.h",
+        "CoralNpuMatrixCoreAxi.zip",
+    ],
+    gen_flags = [
+        "--enableFetchL0=False",
+        "--fetchDataBits=128",
+        "--lsuDataBits=128",
+        "--enableRvv=False",
+        "--enableMatrix=True",
+        "--enableFloat=False",
+        "--matrixM=2",
+        "--matrixN=2",
+        "--matrixK=4",
+        "--matrixRespLatencyCycles=1",
+        # Base name only; CoreAxi appends "Axi" (see CoreAxi.scala desiredName).
+        "--moduleName=CoralNpuMatrixCore",
+        "--useAxi",
+    ],
+    module_name = "CoralNpuMatrixCoreAxi",
+    verilog_file_path = "CoralNpuMatrixCoreAxi.sv",
+    vopts = CORE_MINI_AXI_VOPTS,
+)
+
+# Matrix-enabled core (4x4x4): separate top name for easy benchmarking.
+chisel_cc_library(
+    name = "coralnpu_matrix4x4_core_axi_cc_library",
+    chisel_lib = ":coralnpu",
+    emit_class = "coralnpu.EmitCore",
+    extra_outs = [
+        "VCoralNpuMatrix4x4CoreAxi_parameters.h",
+        "CoralNpuMatrix4x4CoreAxi.zip",
+    ],
+    gen_flags = [
+        "--enableFetchL0=False",
+        "--fetchDataBits=128",
+        "--lsuDataBits=128",
+        "--enableRvv=False",
+        "--enableMatrix=True",
+        "--enableFloat=False",
+        "--matrixM=4",
+        "--matrixN=4",
+        "--matrixK=4",
+        "--matrixRespLatencyCycles=1",
+        "--moduleName=CoralNpuMatrix4x4Core",
+        "--useAxi",
+    ],
+    module_name = "CoralNpuMatrix4x4CoreAxi",
+    verilog_file_path = "CoralNpuMatrix4x4CoreAxi.sv",
+    vopts = CORE_MINI_AXI_VOPTS,
+)
+
+# Matrix-enabled core (8x8x4): separate top name for easy benchmarking.
+chisel_cc_library(
+    name = "coralnpu_matrix8x8k4_core_axi_cc_library",
+    chisel_lib = ":coralnpu",
+    emit_class = "coralnpu.EmitCore",
+    extra_outs = [
+        "VCoralNpuMatrix8x8k4CoreAxi_parameters.h",
+        "CoralNpuMatrix8x8k4CoreAxi.zip",
+    ],
+    gen_flags = [
+        "--enableFetchL0=False",
+        "--fetchDataBits=128",
+        "--lsuDataBits=128",
+        "--enableRvv=False",
+        "--enableMatrix=True",
+        "--enableFloat=False",
+        "--matrixM=8",
+        "--matrixN=8",
+        "--matrixK=4",
+        "--matrixRespLatencyCycles=1",
+        "--moduleName=CoralNpuMatrix8x8k4Core",
+        "--useAxi",
+    ],
+    module_name = "CoralNpuMatrix8x8k4CoreAxi",
+    verilog_file_path = "CoralNpuMatrix8x8k4CoreAxi.sv",
+    vopts = CORE_MINI_AXI_VOPTS,
+)
+
 template_rule(
     chisel_cc_library,
     {
@@ -499,7 +608,7 @@ template_rule(
                 "--enableFetchL0=False",
                 "--fetchDataBits=128",
                 "--lsuDataBits=128",
-                "--enableFloat=True",
+                "--enableFloat=False",
                 "--moduleName=CoreMini",
                 "--useAxi",
             ],
@@ -515,7 +624,7 @@ template_rule(
                 "--enableFetchL0=False",
                 "--fetchDataBits=128",
                 "--lsuDataBits=128",
-                "--enableFloat=True",
+                "--enableFloat=False",
                 "--moduleName=CoreMiniVerification",
                 "--useAxi",
                 "--enableVerification=True",
@@ -541,7 +650,7 @@ chisel_cc_library(
         "--enableFetchL0=False",
         "--fetchDataBits=128",
         "--lsuDataBits=128",
-        "--enableFloat=True",
+        "--enableFloat=False",
         "--moduleName=CoreMini",
         "--useAxi",
         "--itcmSizeKBytes=1024",
@@ -563,7 +672,7 @@ chisel_cc_library(
         "--enableFetchL0=False",
         "--fetchDataBits=128",
         "--lsuDataBits=128",
-        "--enableFloat=True",
+        "--enableFloat=False",
         "--moduleName=CoreMini",
         "--useAxi",
         "--itcmSizeKBytes=512",
@@ -621,7 +730,7 @@ RVV_CORE_MINI_AXI_COMMON_GEN_FLAGS = [
     "--fetchDataBits=128",
     "--lsuDataBits=128",
     "--enableRvv=True",
-    "--enableFloat=True",
+    "--enableFloat=False",
     "--useAxi",
 ]
 
@@ -640,7 +749,7 @@ template_rule(
                 "--fetchDataBits=128",
                 "--lsuDataBits=128",
                 "--enableRvv=True",
-                "--enableFloat=True",
+                "--enableFloat=False",
                 "--useTlul=True",
             ],
             "module_name": "RvvCoreMiniTlul",

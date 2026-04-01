@@ -19,7 +19,11 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 
+#include <cerrno>
 #include <cstddef>
+#include <cstring>
+#include <iomanip>
+#include <iostream>
 #include <memory>
 #include <string>
 
@@ -308,9 +312,15 @@ absl::Status CoreMiniAxi_tb::LoadElfSync(const std::string& file_name) {
 }
 
 absl::Status CoreMiniAxi_tb::LoadElfAsync(const std::string& file_name) {
+  LOG(INFO) << "DEBUG: patched CoreMiniAxi_tb::LoadElfAsync";
+  LOG(INFO) << "LoadElfAsync file_name = " << file_name;
+  // Always visible on stderr (independent of Abseil min log level).
+  std::cerr << "[core_mini_axi_tb] DEBUG patched LoadElfAsync file_name=" << file_name
+            << std::endl;
   absl::MutexLock lock(&transfer_queue_mtx_);
-  int fd = open(file_name.c_str(), 0);
-  CHECK(fd > 0);
+  int fd = open(file_name.c_str(), O_RDONLY);
+  // Success is any non-negative fd; only -1 indicates failure (see open(2)).
+  CHECK(fd >= 0) << "open(\"" << file_name << "\"): " << strerror(errno);
   struct stat sb;
   CHECK(fstat(fd, &sb) == 0);
   auto file_size = sb.st_size;
@@ -324,11 +334,30 @@ absl::Status CoreMiniAxi_tb::LoadElfAsync(const std::string& file_name) {
     std::vector<DataTransfer> elf_transfers;
     const Elf32_Ehdr* elf_header = reinterpret_cast<Elf32_Ehdr*>(file_data);
     auto entry_point = elf_header->e_entry;
+    std::cerr << "[LoadElf] e_entry=0x" << std::hex << std::setw(8) << std::setfill('0')
+              << entry_point << std::dec << " e_phnum=" << static_cast<int>(elf_header->e_phnum)
+              << std::endl;
+    for (int i = 0; i < elf_header->e_phnum; ++i) {
+      const Elf32_Phdr* ph = reinterpret_cast<const Elf32_Phdr*>(
+          data8 + elf_header->e_phoff + sizeof(Elf32_Phdr) * i);
+      if (ph->p_type == PT_LOAD) {
+        std::cerr << "[LoadElf] PHDR[" << i << "] PT_LOAD p_vaddr=0x" << std::hex
+                  << std::setw(8) << std::setfill('0') << ph->p_vaddr << " p_paddr=0x" << std::setw(8)
+                  << std::setfill('0') << ph->p_paddr << " p_offset=0x" << std::setw(8)
+                  << std::setfill('0') << ph->p_offset << " p_filesz=0x" << std::setw(8)
+                  << std::setfill('0') << ph->p_filesz << " p_memsz=0x" << std::setw(8)
+                  << std::setfill('0') << ph->p_memsz << std::dec << std::endl;
+      }
+    }
     // Reserve space for write+read+expect for each section, and one additional
     // for the entry point CSR.
     elf_transfers.reserve(3 * elf_header->e_phnum + 1);
     ::LoadElf(data8,
               [&elf_transfers](void* dest, const void* src, size_t count) {
+                std::cerr << "[LoadElf] segment write dest=0x" << std::hex << std::setw(8)
+                          << std::setfill('0')
+                          << reinterpret_cast<uint64_t>(dest) << " count=0x" << std::setw(8)
+                          << std::setfill('0') << count << std::dec << std::endl;
                 elf_transfers.push_back(utils::Write(
                     reinterpret_cast<uint64_t>(dest),
                     reinterpret_cast<uint8_t*>(const_cast<void*>(src)), count));
@@ -338,6 +367,9 @@ absl::Status CoreMiniAxi_tb::LoadElfAsync(const std::string& file_name) {
                     reinterpret_cast<uint8_t*>(const_cast<void*>(src)), count));
                 return dest;
               });
+    std::cerr << "[LoadElf] write entry point to csr addr=0x" << std::hex << std::setw(8)
+              << std::setfill('0') << static_cast<uint32_t>(csr_addr_ + 0x4) << " entry=0x"
+              << std::setw(8) << std::setfill('0') << entry_point << std::dec << std::endl;
     elf_transfers.push_back(utils::Write(
       csr_addr_ + 0x4, reinterpret_cast<uint8_t*>(&entry_point), sizeof(entry_point)
     ));
@@ -348,6 +380,7 @@ absl::Status CoreMiniAxi_tb::LoadElfAsync(const std::string& file_name) {
       // NB: This alignment requirement is to simplify the watchpoint implementation.
       CHECK((tohost & 0xFFFFFFF0L) == tohost);
       tohost_addr_ = tohost;
+      std::cerr << "[LoadElf] symbol tohost=0x" << std::hex << tohost << std::dec << std::endl;
     }
     uint32_t tohost_ready;
     if (::LookupSymbol(data8, "tohost_ready", &tohost_ready)) {
@@ -849,6 +882,78 @@ void CoreMiniAxi_tb::posedge() {
     TraceInstructions();
   }
 
+  // Minimal "matrix path" observation:
+  // - decode/dispatch: see dispatched instruction word (custom-2 opcode 0x5B)
+  // - retire: see RB-valid instruction word (same opcode) and trap bit
+  if (instr_trace_) {
+    auto is_matrix = [](uint32_t inst) { return (inst & 0x7fu) == 0x5bu; };
+
+    const bool d0 = debug_io_.dispatch_0_instFire.read();
+    const bool d1 = debug_io_.dispatch_1_instFire.read();
+    const bool d2 = debug_io_.dispatch_2_instFire.read();
+    const bool d3 = debug_io_.dispatch_3_instFire.read();
+
+    if (d0) {
+      const uint32_t pc = debug_io_.dispatch_0_instAddr.read().get_word(0);
+      const uint32_t inst = debug_io_.dispatch_0_instInst.read().get_word(0);
+      if (is_matrix(inst)) {
+        std::cerr << "[MATRIX] dispatch slot0 pc=0x" << std::hex << std::setw(8) << std::setfill('0')
+                  << pc << " inst=0x" << std::setw(8) << std::setfill('0') << inst << std::dec
+                  << std::endl;
+      }
+    }
+    if (d1) {
+      const uint32_t pc = debug_io_.dispatch_1_instAddr.read().get_word(0);
+      const uint32_t inst = debug_io_.dispatch_1_instInst.read().get_word(0);
+      if (is_matrix(inst)) {
+        std::cerr << "[MATRIX] dispatch slot1 pc=0x" << std::hex << std::setw(8) << std::setfill('0')
+                  << pc << " inst=0x" << std::setw(8) << std::setfill('0') << inst << std::dec
+                  << std::endl;
+      }
+    }
+    if (d2) {
+      const uint32_t pc = debug_io_.dispatch_2_instAddr.read().get_word(0);
+      const uint32_t inst = debug_io_.dispatch_2_instInst.read().get_word(0);
+      if (is_matrix(inst)) {
+        std::cerr << "[MATRIX] dispatch slot2 pc=0x" << std::hex << std::setw(8) << std::setfill('0')
+                  << pc << " inst=0x" << std::setw(8) << std::setfill('0') << inst << std::dec
+                  << std::endl;
+      }
+    }
+    if (d3) {
+      const uint32_t pc = debug_io_.dispatch_3_instAddr.read().get_word(0);
+      const uint32_t inst = debug_io_.dispatch_3_instInst.read().get_word(0);
+      if (is_matrix(inst)) {
+        std::cerr << "[MATRIX] dispatch slot3 pc=0x" << std::hex << std::setw(8) << std::setfill('0')
+                  << pc << " inst=0x" << std::setw(8) << std::setfill('0') << inst << std::dec
+                  << std::endl;
+      }
+    }
+
+    // Print on rising edge of RB-valid for matrix instructions.
+    static std::vector<bool> rb_seen;
+    if (rb_seen.empty()) rb_seen.resize(KP_retirementBufferSize, false);
+
+#define TRACE_MATRIX_RB(x) do { \
+    const bool v = debug_io_.rb_inst_##x##_valid.read(); \
+    if (v && !rb_seen[x]) { \
+      const uint32_t pc = debug_io_.rb_inst_##x##_bits_pc.read().get_word(0); \
+      const uint32_t inst = debug_io_.rb_inst_##x##_bits_inst.read().get_word(0); \
+      const bool trap = debug_io_.rb_inst_##x##_bits_trap.read(); \
+      if (is_matrix(inst)) { \
+        std::cerr << "[MATRIX] retire idx=" << x << " pc=0x" << std::hex << std::setw(8) << std::setfill('0') << pc \
+                  << " inst=0x" << std::setw(8) << std::setfill('0') << inst << std::dec \
+                  << " trap=" << trap << std::endl; \
+      } \
+      rb_seen[x] = true; \
+    } else if (!v) { \
+      rb_seen[x] = false; \
+    } \
+  } while (0);
+    REPEAT(TRACE_MATRIX_RB, KP_retirementBufferSize);
+#undef TRACE_MATRIX_RB
+  }
+
   static bool invoked_halted_cb = false;
   if ((io_halted || io_fault || tohost_halt) && !invoked_halted_cb) {
     // If instruction tracing is enabled,
@@ -875,7 +980,6 @@ void CoreMiniAxi_tb::posedge() {
   } else {
     io_irq = false;
   }
-
 
   if (!transfer_in_progress_) {
     absl::MutexLock lock(&transfer_queue_mtx_);

@@ -14,6 +14,7 @@
 
 #include "tests/verilator_sim/elf.h"
 
+#include <cstdint>
 #include <cstring>
 #include <elf.h>
 
@@ -28,7 +29,11 @@ uint32_t LoadElf(uint8_t* data, CopyFn copy_fn) {
     if (program_header->p_filesz == 0) {
       continue;
     }
-    copy_fn(reinterpret_cast<void*>(program_header->p_paddr),
+    // Many bare-metal link scripts set VMA in p_vaddr; LMA in p_paddr may be 0.
+    // For simulator placement matching runtime addresses, fall back to p_vaddr.
+    const Elf32_Addr load_addr =
+        program_header->p_paddr != 0 ? program_header->p_paddr : program_header->p_vaddr;
+    copy_fn(reinterpret_cast<void*>(static_cast<uintptr_t>(load_addr)),
             reinterpret_cast<void*>(data + program_header->p_offset),
             program_header->p_filesz);
   }

@@ -16,6 +16,8 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 
+#include <iomanip>
+#include <iostream>
 #include <optional>
 #include <string>
 #include <thread>
@@ -64,6 +66,10 @@ static bool run(const char* name, const std::string binary, const int cycles,
     absl::MutexLock lock_(&halted_mtx);
     halted_cv.Wait(&halted_mtx);
   }
+
+  std::cerr << "[FINAL] io_fault=" << tb.io_fault << " tohost_halt=" << tb.tohost_halt
+            << " tohost_val=0x" << std::hex << std::setw(8) << std::setfill('0') << tb.tohost_val
+            << std::dec << std::endl;
 
   if (!tb.io_fault && !tb.tohost_halt) {
     CHECK_OK(tb.CheckStatusSync());

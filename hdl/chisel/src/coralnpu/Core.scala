@@ -41,7 +41,6 @@ class Core(p: Parameters, moduleName: String) extends Module with RequireAsyncRe
     val fault = Output(Bool())
     val wfi = Output(Bool())
     val irq = Input(Bool())
-    val timer_irq = Input(Bool())
     val debug_req = Input(Bool())
     val dm = new CoreDMIO(p)
 
@@ -73,7 +72,6 @@ class Core(p: Parameters, moduleName: String) extends Module with RequireAsyncRe
   io.fault  := score.io.fault
   io.wfi    := score.io.wfi
   score.io.irq := io.irq
-  score.io.timer_irq := io.timer_irq
 
   score.io.dm <> io.dm
 
@@ -110,6 +108,14 @@ object EmitCore extends App {
       p.enableVerification = arg.split("=")(1).toBoolean
     } else if (arg.startsWith("--lsuDataBits")) {
       p.lsuDataBits = arg.split("=")(1).toInt
+    } else if (arg.startsWith("--matrixM=")) {
+      p.matrixM = arg.split("=")(1).toInt
+    } else if (arg.startsWith("--matrixN=")) {
+      p.matrixN = arg.split("=")(1).toInt
+    } else if (arg.startsWith("--matrixK=")) {
+      p.matrixK = arg.split("=")(1).toInt
+    } else if (arg.startsWith("--matrixRespLatencyCycles=")) {
+      p.matrixRespLatencyCycles = arg.split("=")(1).toInt
     // itcmSizeKBytes, and dtcmSizeKBytes replace highmem flag
     // if highmem is needed, set both tcm sizes to 1024
     } else if (arg.startsWith("--itcmSizeKBytes")) {

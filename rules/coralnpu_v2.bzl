@@ -241,6 +241,11 @@ def coralnpu_v2_binary(
     """
 
     deps = kwargs.pop("deps", [])
+    # If the caller sets visibility on the binary rule, apply the same visibility
+    # to the convenience filegroups (<name>.elf/.bin/.vmem). Otherwise these
+    # filegroups inherit package-default visibility, which can break cross-package
+    # usage (e.g. cocotb test data).
+    visibility = kwargs.get("visibility", None)
     if semihosting:
         deps.append("//toolchain/crt:crt_semihosting")
     else:
@@ -285,6 +290,7 @@ def coralnpu_v2_binary(
         srcs = [name],
         output_group = "elf_file",
         tags = tags,
+        visibility = visibility,
     )
 
     native.filegroup(
@@ -292,6 +298,7 @@ def coralnpu_v2_binary(
         srcs = [name],
         output_group = "vmem_file",
         tags = tags,
+        visibility = visibility,
     )
 
     native.filegroup(
@@ -299,4 +306,5 @@ def coralnpu_v2_binary(
         srcs = [name],
         output_group = "bin_file",
         tags = tags,
+        visibility = visibility,
     )

@@ -43,6 +43,16 @@ COCOTB_TEST_BINARY_TARGETS = glob(["**/*.elf"]) + glob(["**/*.o"]) + [
     "//tests/cocotb/coralnpu_isa:coralnpu_isa_tests",
     "//tests/cocotb/exceptions:elf_files",
     "//third_party/riscv-tests:all_files",
+    "//tests/verilator_sim:matrix_minimal_demo.elf",
+    "//tests/verilator_sim:matrix_mac_acc_demo.elf",
+    "//tests/verilator_sim:matrix_alt_addr_demo.elf",
+    "//tests/verilator_sim:matrix_two_blocks_demo.elf",
+    "//tests/verilator_sim:matrix_intentional_fail_demo.elf",
+    "//tests/verilator_sim:matrix4x4_minimal_demo.elf",
+    "//tests/verilator_sim:matrix4x4_bench_demo.elf",
+    "//tests/verilator_sim:matrix8x8k4_minimal_demo.elf",
+    "//tests/verilator_sim:matrix8x8k4_bench_demo.elf",
+    "//tests/cocotb/rvv:rvv_matmul8x8k4_bench_demo.elf",
 ]
 
 verilator_cocotb_model(
@@ -76,6 +86,54 @@ verilator_cocotb_model(
     hdl_toplevel = "RvvCoreMini_ITCM512KB_DTCM512KBAxi",
     verilog_source = "//hdl/chisel/src/coralnpu:RvvCoreMini_ITCM512KB_DTCM512KBAxi.sv",
 )
+
+verilator_cocotb_model(
+    name = "coralnpu_matrix_core_axi_model",
+    trace = False,
+    cflags = VERILATOR_BUILD_ARGS,
+    hdl_toplevel = "CoralNpuMatrixCoreAxi",
+    verilog_source = "//hdl/chisel/src/coralnpu:CoralNpuMatrixCoreAxi.sv",
+)
+
+verilator_cocotb_model(
+    name = "coralnpu_matrix4x4_core_axi_model",
+    trace = False,
+    cflags = VERILATOR_BUILD_ARGS,
+    hdl_toplevel = "CoralNpuMatrix4x4CoreAxi",
+    verilog_source = "//hdl/chisel/src/coralnpu:CoralNpuMatrix4x4CoreAxi.sv",
+)
+
+verilator_cocotb_model(
+    name = "coralnpu_matrix8x8k4_core_axi_model",
+    trace = False,
+    cflags = VERILATOR_BUILD_ARGS,
+    hdl_toplevel = "CoralNpuMatrix8x8k4CoreAxi",
+    verilog_source = "//hdl/chisel/src/coralnpu:CoralNpuMatrix8x8k4CoreAxi.sv",
+)
+
+# BEGIN_TESTCASES_FOR_coralnpu_matrix_core_axi_sim_cocotb
+CORALNPU_MATRIX_CORE_AXI_SIM_TESTCASES = [
+    "matrix_minimal_demo_smoke",
+    "matrix_mac_acc_smoke",
+    "matrix_alt_addr_smoke",
+    "matrix_two_blocks_smoke",
+    "matrix_intentional_fail_is_caught",
+]
+# END_TESTCASES_FOR_coralnpu_matrix_core_axi_sim_cocotb
+
+# BEGIN_TESTCASES_FOR_coralnpu_matrix4x4_core_axi_sim_cocotb
+CORALNPU_MATRIX4X4_CORE_AXI_SIM_TESTCASES = [
+    "matrix4x4_minimal_demo_smoke",
+    "matrix4x4_mac_per_cycle_bench",
+]
+# END_TESTCASES_FOR_coralnpu_matrix4x4_core_axi_sim_cocotb
+
+# BEGIN_TESTCASES_FOR_coralnpu_matrix8x8k4_core_axi_sim_cocotb
+CORALNPU_MATRIX8X8K4_CORE_AXI_SIM_TESTCASES = [
+    "matrix8x8k4_minimal_demo_smoke",
+    "matrix8x8k4_mac_per_cycle_bench",
+]
+# END_TESTCASES_FOR_coralnpu_matrix8x8k4_core_axi_sim_cocotb
 
 # BEGIN_TESTCASES_FOR_core_mini_axi_sim_cocotb
 CORE_MINI_AXI_SIM_TESTCASES = [
@@ -120,6 +178,12 @@ RVV_CORE_MINI_AXI_SIM_TESTCASES = [
 ]
 # END_TESTCASES_FOR_rvv_core_mini_axi_sim_cocotb
 
+# BEGIN_TESTCASES_FOR_rvv_matmul_bench_cocotb
+RVV_MATMUL_BENCH_TESTCASES = [
+    "rvv_8x8x4_mac_per_cycle_bench",
+]
+# END_TESTCASES_FOR_rvv_matmul_bench_cocotb
+
 CORE_MINI_AXI_SIM_COMMON_TEST_KWARGS = {
    "waves": False,
     "seed": "42",
@@ -160,6 +224,58 @@ template_rule(
             "verilator_model": ":rvv_core_mini_axi_model",
             "testcases": RVV_CORE_MINI_AXI_SIM_TESTCASES,
             "testcases_vname": "RVV_CORE_MINI_AXI_SIM_TESTCASES",
+        },
+        "coralnpu_matrix_core_axi_sim_cocotb": {
+            "tests_kwargs": dict(
+                CORE_MINI_AXI_SIM_COMMON_TEST_KWARGS,
+                hdl_toplevel = "CoralNpuMatrixCoreAxi",
+                test_module = ["matrix/matrix2x2_sim.py"],
+                default_testcase_size = "medium",
+                size = "enormous",
+            ),
+            "vcs_verilog_sources": ["//hdl/chisel/src/coralnpu:coralnpu_matrix_core_axi_cc_library_verilog"],
+            "verilator_model": ":coralnpu_matrix_core_axi_model",
+            "testcases": CORALNPU_MATRIX_CORE_AXI_SIM_TESTCASES,
+            "testcases_vname": "CORALNPU_MATRIX_CORE_AXI_SIM_TESTCASES",
+        },
+        "coralnpu_matrix4x4_core_axi_sim_cocotb": {
+            "tests_kwargs": dict(
+                CORE_MINI_AXI_SIM_COMMON_TEST_KWARGS,
+                hdl_toplevel = "CoralNpuMatrix4x4CoreAxi",
+                test_module = ["matrix/matrix4x4_sim.py"],
+                default_testcase_size = "medium",
+                size = "enormous",
+            ),
+            "vcs_verilog_sources": ["//hdl/chisel/src/coralnpu:coralnpu_matrix4x4_core_axi_cc_library_verilog"],
+            "verilator_model": ":coralnpu_matrix4x4_core_axi_model",
+            "testcases": CORALNPU_MATRIX4X4_CORE_AXI_SIM_TESTCASES,
+            "testcases_vname": "CORALNPU_MATRIX4X4_CORE_AXI_SIM_TESTCASES",
+        },
+        "coralnpu_matrix8x8k4_core_axi_sim_cocotb": {
+            "tests_kwargs": dict(
+                CORE_MINI_AXI_SIM_COMMON_TEST_KWARGS,
+                hdl_toplevel = "CoralNpuMatrix8x8k4CoreAxi",
+                test_module = ["matrix/matrix8x8k4_sim.py"],
+                default_testcase_size = "medium",
+                size = "enormous",
+            ),
+            "vcs_verilog_sources": ["//hdl/chisel/src/coralnpu:coralnpu_matrix8x8k4_core_axi_cc_library_verilog"],
+            "verilator_model": ":coralnpu_matrix8x8k4_core_axi_model",
+            "testcases": CORALNPU_MATRIX8X8K4_CORE_AXI_SIM_TESTCASES,
+            "testcases_vname": "CORALNPU_MATRIX8X8K4_CORE_AXI_SIM_TESTCASES",
+        },
+        "rvv_matmul_bench_cocotb": {
+            "tests_kwargs": dict(
+                CORE_MINI_AXI_SIM_COMMON_TEST_KWARGS,
+                hdl_toplevel = "RvvCoreMiniAxi",
+                test_module = ["rvv_matmul_bench_sim.py"],
+                default_testcase_size = "medium",
+                size = "enormous",
+            ),
+            "vcs_verilog_sources": ["//hdl/chisel/src/coralnpu:rvv_core_mini_axi_cc_library_verilog"],
+            "verilator_model": ":rvv_core_mini_axi_model",
+            "testcases": RVV_MATMUL_BENCH_TESTCASES,
+            "testcases_vname": "RVV_MATMUL_BENCH_TESTCASES",
         },
     },
     simulators = [
@@ -493,6 +609,13 @@ coralnpu_v2_binary(
     name = "stress_test",
     srcs = [
         "stress_test.cc",
+    ],
+)
+
+coralnpu_v2_binary(
+    name = "timer_interrupt_test",
+    srcs = [
+        "timer_interrupt_test.cc",
     ],
 )
 

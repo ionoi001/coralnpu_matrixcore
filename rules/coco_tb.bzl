@@ -208,9 +208,12 @@ def verilator_cocotb_test(
         data = data,
     )
 
-    extra_env = list(kwargs.pop("extra_env", []))
-    extra_env.append("COCOTB_TEST_FILTER=$TESTBRIDGE_TEST_ONLY")
-    kwargs["extra_env"] = extra_env
+    # Do not force COCOTB_TEST_FILTER from TESTBRIDGE_TEST_ONLY.
+    # The underlying cocotb_test rule already supports selecting testcases via
+    # its `testcase` attribute (used by cocotb_test_suite). For `bazel run`,
+    # TESTBRIDGE_TEST_ONLY is often unset/empty, and an empty filter can cause
+    # cocotb to discover zero tests.
+    kwargs["extra_env"] = list(kwargs.pop("extra_env", []))
 
     cocotb_test(
         name = name,
@@ -326,9 +329,7 @@ def vcs_cocotb_test(
         data = data,
     )
 
-    extra_env = list(kwargs.pop("extra_env", []))
-    extra_env.append("COCOTB_TEST_FILTER=$TESTBRIDGE_TEST_ONLY")
-    kwargs["extra_env"] = extra_env
+    kwargs["extra_env"] = list(kwargs.pop("extra_env", []))
 
     cocotb_test(
         name = name,

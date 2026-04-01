@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 load("//rules:coralnpu_v2.bzl", "coralnpu_v2_binary")
 load("//rules:utils.bzl", "template_rule")
 
@@ -65,6 +64,9 @@ template_rule(
         "vstart_store": {
             "srcs": ["vstart_store.S"],
         },
+        "rvv_matmul8x8k4_bench_demo": {
+            "srcs": ["rvv_matmul8x8k4_bench_demo.cc"],
+        },
     },
 )
 
@@ -86,5 +88,6 @@ filegroup(
         "vsetvl_test.elf",
         "vslide.elf",
         "vstart_store.elf",
+        "rvv_matmul8x8k4_bench_demo.elf",
     ],
 )

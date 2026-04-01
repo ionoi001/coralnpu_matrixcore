@@ -217,7 +217,6 @@ class Csr(p: Parameters) extends Module {
       val next_pc = Input(UInt(32.W))
       val debug_pc = Valid(UInt(p.fetchAddrBits.W))
     }
-    val timer_irq = Input(Bool())
     val trace = Output(new CsrTraceIO(p))
   })
 
@@ -380,7 +379,8 @@ class Csr(p: Parameters) extends Module {
     fault := true.B
   }
 
-  val mtip_pending = io.timer_irq && mie(7)
+  // MTIP is not wired from a top-level pin; mip.MTIP reads 0 unless extended later.
+  val mtip_pending = false.B
   val meip_pending = io.irq && mie(11)
   wfi := Mux(wfi, !(mtip_pending || meip_pending || io.dm.debug_req), io.bru.in.wfi)
 
@@ -400,7 +400,7 @@ class Csr(p: Parameters) extends Module {
       mstatusEn   -> Cat(0.U(17.W), fs, 3.U(2.W), vs, 0.U(1.W), mstatus_mpie, 0.U(3.W), mstatus_mie, 0.U(3.W)),
       misaEn      -> misa,
       mieEn       -> mie,
-      mipEn       -> Cat(0.U(20.W), io.irq, 0.U(3.W), io.timer_irq, 0.U(7.W)),
+      mipEn       -> Cat(0.U(20.W), io.irq, 0.U(3.W), false.B, 0.U(7.W)),
       mtvecEn     -> mtvec,
       mscratchEn  -> mscratch,
       mepcEn      -> mepc,

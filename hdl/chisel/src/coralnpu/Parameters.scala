@@ -164,6 +164,31 @@ class Parameters(var m: Seq[MemoryRegion] = Seq(), val hartId: Int = 0) {
   val csrOutCount = 9
 }
 
+/**
+  * Fixed, supported configuration for matrix-enabled core RTL (SystemVerilog export via
+  * `EmitCore` / `coralnpu_matrix_core_cc_library`). Keep in sync with `gen_flags` in
+  * `hdl/chisel/src/coralnpu/BUILD` for the matrix export targets.
+  *
+  * Uncached fetch, 128b I/D bus tile, 2×2×4 MAC, shim latency 1 — matches `SCoreMatrixHarnessSpec`.
+  */
+object CoralNpuMatrixCoreParameters {
+  def apply(): Parameters = {
+    val p = new Parameters
+    p.enableMatrix = true
+    p.enableRvv = false
+    p.enableFloat = false
+    p.enableVerification = false
+    p.enableFetchL0 = false
+    p.fetchDataBits = 128
+    p.lsuDataBits = 128
+    p.matrixM = 2
+    p.matrixN = 2
+    p.matrixK = 4
+    p.matrixRespLatencyCycles = 1
+    p
+  }
+}
+
 import scala.reflect.runtime.{universe => ru}
 object EmitParametersHeader {
   def apply(p: Parameters): String = {

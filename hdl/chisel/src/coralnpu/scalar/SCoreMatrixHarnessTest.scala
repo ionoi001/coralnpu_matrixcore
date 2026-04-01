@@ -30,20 +30,8 @@ import org.scalatest.freespec.AnyFreeSpec
   */
 class SCoreMatrixHarnessSpec extends AnyFreeSpec with ChiselSim {
 
-  private def mkParams(): Parameters = {
-    val p = new Parameters
-    p.enableMatrix = true
-    p.enableFetchL0 = false
-    p.enableRvv = false
-    p.enableFloat = false
-    p.lsuDataBits = 128
-    p.fetchDataBits = 128
-    p.matrixM = 2
-    p.matrixN = 2
-    p.matrixK = 4
-    p.matrixRespLatencyCycles = 1
-    p
-  }
+  /** Same configuration as [[coralnpu.CoralNpuMatrixCoreParameters]] / SV export targets. */
+  private def mkParams(): Parameters = CoralNpuMatrixCoreParameters()
 
   private def lui(rd: Int, imm20: Int): Int = {
     val imm = imm20 & 0xfffff
@@ -153,8 +141,6 @@ class SCoreMatrixHarnessSpec extends AnyFreeSpec with ChiselSim {
 
   private def tieOffMinimal(dut: SCore, p: Parameters): Unit = {
     dut.io.irq.poke(false.B)
-    // Feeds CSR `mip`/MTIP and WFI wakeup (see Csr.scala); not removable without RTL change.
-    dut.io.timer_irq.poke(false.B)
     dut.io.dm.debug_req.poke(false.B)
     dut.io.dm.resume_req.poke(false.B)
     dut.io.dm.csr.valid.poke(false.B)
@@ -632,6 +618,149 @@ class SCoreMatrixHarnessSpec extends AnyFreeSpec with ChiselSim {
       assert(dbusReadsToScratch >= 1, "expected at least one DBus read to scratch (LW)")
       assert(sawCWrite, "expected matrix writeback to C")
       assert(lastCdata == expectedC, s"matrix C wdata got 0x${lastCdata.toString(16)}")
+    }
+  }
+
+  /**
+    * SET_C alone (no MAC): matrixComplete / matrixArchInflight must not wedge the core — FENCE.I
+    * must still dispatch after SET_C finishes (inflight returns to 0).
+    */
+  "Case6A SET_C only then FENCE.I: inflight does not stick, fence can dispatch" in {
+    val p = mkParams()
+    val xC = 12
+    val prog = Array(
+      lui(xC, 0x12),
+      instSetC(xC),
+      instFenceI,
+      instJalX0,
+    )
+
+    val resetPc = 0
+    val imemBase = 0
+
+    simulate(new SCore(p)) { dut =>
+      applyReset(dut)
+      tieOffMinimal(dut, p)
+      dut.io.csr.in.value(0).poke((resetPc & 0xffffffffL).U)
+
+      var setcFireCycle = Option.empty[Int]
+      var fenceFireCycle = Option.empty[Int]
+      var cyc = 0
+
+      for (_ <- 0 until 4000) {
+        val ibAddr = dut.io.ibus.addr.peek().litValue
+        dut.io.ibus.fault.valid.poke(false.B)
+        dut.io.ebus.fault.valid.poke(false.B)
+        if (dut.io.ibus.valid.peek().litToBoolean) {
+          dut.io.ibus.ready.poke(true.B)
+          dut.io.ibus.rdata.poke(imemLine(prog, imemBase, ibAddr.toInt).U(p.fetchDataBits.W))
+        } else {
+          dut.io.ibus.ready.poke(false.B)
+        }
+
+        dut.io.dbus.rdata.poke(0.U(p.lsuDataBits.W))
+        dut.io.dbus.ready.poke(true.B)
+
+        val inst0 = dut.io.debug.dispatch(0).instInst.peek().litValue
+        val fire0 = dut.io.debug.dispatch(0).instFire.peek().litToBoolean
+        if (inst0 == BigInt(instSetC(xC) & 0xffffffffL) && fire0) {
+          if (setcFireCycle.isEmpty) {
+            setcFireCycle = Some(cyc)
+          }
+        }
+        if (inst0 == BigInt(instFenceI & 0xffffffffL) && fire0) {
+          if (fenceFireCycle.isEmpty) {
+            fenceFireCycle = Some(cyc)
+          }
+        }
+
+        dut.clock.step()
+        cyc += 1
+      }
+
+      assert(setcFireCycle.nonEmpty, "SET_C should dispatch (fire)")
+      assert(fenceFireCycle.nonEmpty, "FENCE.I should dispatch — matrixArchInflight must not stay stuck after SET_C")
+      assert(
+        fenceFireCycle.get > setcFireCycle.get,
+        "FENCE.I must fire after SET_C (program order + inflight cleared)",
+      )
+    }
+  }
+
+  /** SET_C + MAC + MAC_ACC ×2: final C tile should be exactly 3× the single-MAC tile (Case1 baseline). */
+  "Case6B SET_C + MAC + MAC_ACC + MAC_ACC triple accumulation" in {
+    val p = mkParams()
+    val beatBytes = p.lsuDataBits / 8
+    val aBase = 0x10000
+    val bBase = 0x11000
+    val cBase = 0x12000
+
+    val xA = 10
+    val xB = 11
+    val xC = 12
+
+    val prog = Array(
+      lui(xA, 0x10),
+      lui(xB, 0x11),
+      lui(xC, 0x12),
+      instSetC(xC),
+      instMac(xA, xB),
+      instMacAcc(xA, xB),
+      instMacAcc(xA, xB),
+      instJalX0,
+    )
+
+    val aBytes = Seq(1, 2, 3, 4, 5, 6, 7, 8)
+    val bBytes = Seq(1, 2, 3, 4, 5, 6, 7, 8)
+    val baseWords = Seq(50, 60, 114, 140)
+    val cWords = baseWords.map(_ * 3)
+    val expectedC = packBytesLE(int32sToBytesLE(cWords), beatBytes)
+
+    val dmem = scala.collection.mutable.Map[BigInt, Int]().withDefaultValue(0)
+    for ((b, i) <- aBytes.zipWithIndex) { dmem(BigInt(aBase + i)) = b }
+    for ((b, i) <- bBytes.zipWithIndex) { dmem(BigInt(bBase + i)) = b }
+
+    val resetPc = 0
+    val imemBase = 0
+
+    simulate(new SCore(p)) { dut =>
+      applyReset(dut)
+      tieOffMinimal(dut, p)
+      dut.io.csr.in.value(0).poke((resetPc & 0xffffffffL).U)
+
+      var lastWriteData = BigInt(0)
+      var cWrites = 0
+
+      for (_ <- 0 until 12000) {
+        val ibAddr = dut.io.ibus.addr.peek().litValue
+        dut.io.ibus.fault.valid.poke(false.B)
+        dut.io.ebus.fault.valid.poke(false.B)
+        if (dut.io.ibus.valid.peek().litToBoolean) {
+          dut.io.ibus.ready.poke(true.B)
+          dut.io.ibus.rdata.poke(imemLine(prog, imemBase, ibAddr.toInt).U(p.fetchDataBits.W))
+        } else {
+          dut.io.ibus.ready.poke(false.B)
+        }
+
+        val dbusReadAddr = dut.io.dbus.addr.peek().litValue
+        dut.io.dbus.rdata.poke(dmemLoad128(dmem, dbusReadAddr, beatBytes).U(p.lsuDataBits.W))
+        dut.io.dbus.ready.poke(true.B)
+
+        if (dut.io.dbus.valid.peek().litToBoolean && dut.io.dbus.ready.peek().litToBoolean) {
+          if (dut.io.dbus.write.peek().litToBoolean) {
+            val addr = dut.io.dbus.addr.peek().litValue
+            if (addr == BigInt(cBase)) {
+              cWrites += 1
+              lastWriteData = dut.io.dbus.wdata.peek().litValue
+            }
+          }
+        }
+
+        dut.clock.step()
+      }
+
+      assert(cWrites >= 1, "expected at least one C writeback")
+      assert(lastWriteData == expectedC, s"triple MAC_ACC C: got 0x${lastWriteData.toString(16)} exp 0x${expectedC.toString(16)}")
     }
   }
 }

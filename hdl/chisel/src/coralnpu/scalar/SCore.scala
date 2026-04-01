@@ -38,7 +38,6 @@ class SCore(p: Parameters) extends Module {
     val wfi = Output(Bool())
     val irq = Input(Bool())
     val dm = new CoreDMIO(p)
-    val timer_irq = Input(Bool())
 
     val ibus = new IBusIO(p)
     val dbus = new DBusIO(p)
@@ -266,7 +265,7 @@ class SCore(p: Parameters) extends Module {
   io.fault  := csr.io.fault
   io.wfi    := csr.io.wfi
   csr.io.irq := io.irq
-  csr.io.timer_irq := io.timer_irq
+
 
   // ---------------------------------------------------------------------------
   // Load/Store Unit
@@ -386,10 +385,7 @@ class SCore(p: Parameters) extends Module {
     ))
     fRegfile.get.io.dm_write_valid := io.dm.float_rd.get.valid
 
-    // TODO(derekjchow): Stub-off scalar fp writeback
-    if (p.enableRvv) {
-      io.rvvcore.get.async_frd.ready := false.B
-    }
+    // TODO(derekjchow): Stub-off scalar fp writeback (async_frd.ready when RVV+float: see RVV block)
 
     floatCore.get.io.inst <> dispatch.io.float.get
     dispatch.io.fscoreboard.get := fRegfile.get.io.scoreboard
@@ -440,6 +436,10 @@ class SCore(p: Parameters) extends Module {
   // ---------------------------------------------------------------------------
   // Rvv Extension
   if (p.enableRvv) {
+    // Float async writeback to scalar regfile; when enableFloat=false, nothing consumes this
+    // Decoupled source — ready must be driven (firtool). Float+RVV path ties false in float block.
+    io.rvvcore.get.async_frd.ready := !p.enableFloat.B
+
     // Connect dispatch
     dispatch.io.rvv.get <> io.rvvcore.get.inst
     dispatch.io.rvvState.get := io.rvvcore.get.configState

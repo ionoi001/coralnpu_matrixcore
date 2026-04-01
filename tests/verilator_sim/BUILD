@@ -24,6 +24,73 @@ coralnpu_v2_binary(
     visibility = ["//visibility:public"],
 )
 
+# Bare-metal matrix ISA smoke test (SET_C + MAC); see coralnpu_matrix_insn.h.
+# Use default ITCM/DTCM sizes (8KB / 32KB) so //rules:linker.bzl keeps DTCM at
+# 0x00010000 (lowmem). Non-default sizes switch DTCM to 0x00100000 (highmem), which
+# does not match //tests/verilator_sim core_mini_axi_tb CSR @ 0x30000 unless HIGHMEM_RTL.
+coralnpu_v2_binary(
+    name = "matrix_minimal_demo",
+    srcs = ["coralnpu/matrix_minimal_demo.c"],
+    hdrs = ["coralnpu/coralnpu_matrix_insn.h"],
+    visibility = ["//visibility:public"],
+)
+
+coralnpu_v2_binary(
+    name = "matrix_mac_acc_demo",
+    srcs = ["coralnpu/matrix_mac_acc_demo.c"],
+    hdrs = ["coralnpu/coralnpu_matrix_insn.h"],
+    visibility = ["//visibility:public"],
+)
+
+coralnpu_v2_binary(
+    name = "matrix_alt_addr_demo",
+    srcs = ["coralnpu/matrix_alt_addr_demo.c"],
+    hdrs = ["coralnpu/coralnpu_matrix_insn.h"],
+    visibility = ["//visibility:public"],
+)
+
+coralnpu_v2_binary(
+    name = "matrix_two_blocks_demo",
+    srcs = ["coralnpu/matrix_two_blocks_demo.c"],
+    hdrs = ["coralnpu/coralnpu_matrix_insn.h"],
+    visibility = ["//visibility:public"],
+)
+
+coralnpu_v2_binary(
+    name = "matrix_intentional_fail_demo",
+    srcs = ["coralnpu/matrix_intentional_fail_demo.c"],
+    hdrs = ["coralnpu/coralnpu_matrix_insn.h"],
+    visibility = ["//visibility:public"],
+)
+
+coralnpu_v2_binary(
+    name = "matrix4x4_minimal_demo",
+    srcs = ["coralnpu/matrix4x4_minimal_demo.c"],
+    hdrs = ["coralnpu/coralnpu_matrix_insn.h"],
+    visibility = ["//visibility:public"],
+)
+
+coralnpu_v2_binary(
+    name = "matrix4x4_bench_demo",
+    srcs = ["coralnpu/matrix4x4_bench_demo.c"],
+    hdrs = ["coralnpu/coralnpu_matrix_insn.h"],
+    visibility = ["//visibility:public"],
+)
+
+coralnpu_v2_binary(
+    name = "matrix8x8k4_minimal_demo",
+    srcs = ["coralnpu/matrix8x8k4_minimal_demo.c"],
+    hdrs = ["coralnpu/coralnpu_matrix_insn.h"],
+    visibility = ["//visibility:public"],
+)
+
+coralnpu_v2_binary(
+    name = "matrix8x8k4_bench_demo",
+    srcs = ["coralnpu/matrix8x8k4_bench_demo.c"],
+    hdrs = ["coralnpu/coralnpu_matrix_insn.h"],
+    visibility = ["//visibility:public"],
+)
+
 cc_library(
     name = "elf",
     srcs = [
@@ -201,6 +268,39 @@ template_rule(
                 "VERILATOR_MODEL=VRvvCoreMiniVerificationAxi",
             ],
         },
+        "coralnpu_matrix_core_axi_tb": {
+            "srcs": [
+                "@coralnpu_hw//hdl/chisel/src/coralnpu:VCoralNpuMatrixCoreAxi_parameters.h",
+            ] + CORE_MINI_AXI_TB_CC_LIBRARY_COMMON_SRCS,
+            "deps": [
+                "//hdl/chisel/src/coralnpu:coralnpu_matrix_core_axi_cc_library",
+            ] + CORE_MINI_AXI_TB_CC_LIBRARY_COMMON_DEPS,
+            "defines": [
+                "VERILATOR_MODEL=VCoralNpuMatrixCoreAxi",
+            ],
+        },
+        "coralnpu_matrix4x4_core_axi_tb": {
+            "srcs": [
+                "@coralnpu_hw//hdl/chisel/src/coralnpu:VCoralNpuMatrix4x4CoreAxi_parameters.h",
+            ] + CORE_MINI_AXI_TB_CC_LIBRARY_COMMON_SRCS,
+            "deps": [
+                "//hdl/chisel/src/coralnpu:coralnpu_matrix4x4_core_axi_cc_library",
+            ] + CORE_MINI_AXI_TB_CC_LIBRARY_COMMON_DEPS,
+            "defines": [
+                "VERILATOR_MODEL=VCoralNpuMatrix4x4CoreAxi",
+            ],
+        },
+        "coralnpu_matrix8x8k4_core_axi_tb": {
+            "srcs": [
+                "@coralnpu_hw//hdl/chisel/src/coralnpu:VCoralNpuMatrix8x8k4CoreAxi_parameters.h",
+            ] + CORE_MINI_AXI_TB_CC_LIBRARY_COMMON_SRCS,
+            "deps": [
+                "//hdl/chisel/src/coralnpu:coralnpu_matrix8x8k4_core_axi_cc_library",
+            ] + CORE_MINI_AXI_TB_CC_LIBRARY_COMMON_DEPS,
+            "defines": [
+                "VERILATOR_MODEL=VCoralNpuMatrix8x8k4CoreAxi",
+            ],
+        },
     },
     hdrs = [
         "coralnpu/core_mini_axi_tb.h",
@@ -256,6 +356,21 @@ template_rule(
         "rvv_core_mini_verification_axi_sim": {
             "deps": [
                 ":rvv_core_mini_verification_axi_tb",
+            ] + CORE_MINI_AXI_SIM_CC_BINARY_COMMON_DEPS,
+        },
+        "coralnpu_matrix_core_axi_sim": {
+            "deps": [
+                ":coralnpu_matrix_core_axi_tb",
+            ] + CORE_MINI_AXI_SIM_CC_BINARY_COMMON_DEPS,
+        },
+        "coralnpu_matrix4x4_core_axi_sim": {
+            "deps": [
+                ":coralnpu_matrix4x4_core_axi_tb",
+            ] + CORE_MINI_AXI_SIM_CC_BINARY_COMMON_DEPS,
+        },
+        "coralnpu_matrix8x8k4_core_axi_sim": {
+            "deps": [
+                ":coralnpu_matrix8x8k4_core_axi_tb",
             ] + CORE_MINI_AXI_SIM_CC_BINARY_COMMON_DEPS,
         },
     },
