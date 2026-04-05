@@ -16,19 +16,18 @@ package coralnpu.matrix
 
 import chisel3._
 import chisel3.util._
-import coralnpu.{DBusIO, Parameters}
+import coralnpu.Parameters
 
 /**
   * MatrixCore:
   * - Sits next to LSU in SCore (optional via p.enableMatrix)
   * - Accepts [[MatrixQueuedCmd]] from Dispatch (op/pc + operand registers already read)
-  * - Drives a real `DBusIO` master port
+  * - Memory (`io.mem`) is serviced by LSU, which owns `DBusIO`.
   */
 class MatrixCore(p: Parameters) extends Module {
   val io = IO(new Bundle {
     val inst = Flipped(Decoupled(new MatrixQueuedCmd))
-    val dbus = new DBusIO(p)
-    val dbusResp = Flipped(Valid(new MatrixMemResp(p.lsuDataBits)))
+    val mem = new MatrixMemIO(p)
     val active = Output(Bool())
     /** Retire / fence ordering: pulses with PC when SET_C or MAC/MAC_ACC is architecturally done. */
     val matrixComplete = Output(Valid(UInt(32.W)))
@@ -68,15 +67,5 @@ class MatrixCore(p: Parameters) extends Module {
     }
   }
 
-  io.dbus.valid := backend.io.mem.req.valid
-  io.dbus.write := backend.io.mem.req.bits.write
-  io.dbus.pc := backend.io.mem.req.bits.pc
-  io.dbus.addr := backend.io.mem.req.bits.addr
-  io.dbus.adrx := backend.io.mem.req.bits.addr
-  io.dbus.size := backend.io.mem.req.bits.size
-  io.dbus.wdata := backend.io.mem.req.bits.wdata
-  io.dbus.wmask := backend.io.mem.req.bits.wmask
-
-  backend.io.mem.req.ready := io.dbus.ready
-  backend.io.mem.resp := io.dbusResp
+  backend.io.mem <> io.mem
 }

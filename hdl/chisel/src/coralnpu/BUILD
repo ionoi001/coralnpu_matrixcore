@@ -187,7 +187,6 @@ chisel_library(
     srcs = [
         "matrix/MatrixCoreInterface.scala",
         "matrix/MatrixDma.scala",
-        "matrix/MatrixDbusRespShim.scala",
         "matrix/MatrixBackend.scala",
         "matrix/MatrixCore.scala",
         "matrix/MatrixEngine.scala",

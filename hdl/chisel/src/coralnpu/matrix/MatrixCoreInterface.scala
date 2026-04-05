@@ -16,6 +16,7 @@ package coralnpu.matrix
 
 import chisel3._
 import chisel3.util._
+import coralnpu.Parameters
 
 object MatrixOp extends ChiselEnum {
   val SET_C = Value
@@ -48,26 +49,30 @@ class MatrixMemResp(dataBits: Int) extends Bundle {
   val error = Bool()
 }
 
-/**
-  * Minimal DBUS-like interface used by MatrixCore.
-  *
-  * The parent (LSU) arbitrates this onto the real `DBusIO`.
-  */
-class MatrixMemIO(dataBits: Int) extends Bundle {
-  val req = Decoupled(new Bundle {
-    val pc = UInt(32.W)
-    val write = Bool()
-    val addr = UInt(32.W)
-    val size = UInt((log2Ceil(dataBits / 8) + 1).W) // match DBusIO.size width
-    val wdata = UInt(dataBits.W)
-    val wmask = UInt((dataBits / 8).W)
-  })
-  val resp = Flipped(Valid(new MatrixMemResp(dataBits)))
+/** One DBus beat request from [[MatrixBackend]]; consumed by LSU when `p.enableMatrix`. */
+class MatrixDbusReq(p: Parameters) extends Bundle {
+  val pc = UInt(32.W)
+  val write = Bool()
+  val addr = UInt(32.W)
+  val size = UInt(p.dbusSize.W)
+  val wdata = UInt(p.lsuDataBits.W)
+  val wmask = UInt((p.lsuDataBits / 8).W)
 }
 
-class MatrixCoreIO(dataBits: Int) extends Bundle {
+/**
+  * Memory port between [[MatrixBackend]] / [[MatrixCore]] and LSU.
+  *
+  * LSU owns `DBusIO`; it muxes these requests onto the bus and returns read data one cycle
+  * after each read handshake (same timing model as scalar dbus loads).
+  */
+class MatrixMemIO(p: Parameters) extends Bundle {
+  val req = Decoupled(new MatrixDbusReq(p))
+  val resp = Flipped(Valid(new MatrixMemResp(p.lsuDataBits)))
+}
+
+class MatrixCoreIO(p: Parameters) extends Bundle {
   val cmd = Flipped(Decoupled(new MatrixCmd))
-  val mem = new MatrixMemIO(dataBits)
+  val mem = new MatrixMemIO(p)
   val busy = Output(Bool())
   /** One-cycle pulse when a MAC/MAC_ACC has finished all C writeback beats (PC of the op). */
   val cmdComplete = Output(Valid(UInt(32.W)))

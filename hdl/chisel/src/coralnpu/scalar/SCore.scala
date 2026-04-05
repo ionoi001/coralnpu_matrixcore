@@ -21,7 +21,7 @@ import chisel3.util._
 import common._
 import coralnpu.float.{FloatCore}
 import coralnpu.rvv.{RvvCoreIO}
-import coralnpu.matrix.{MatrixCore, MatrixDbusRespShim}
+import coralnpu.matrix.MatrixCore
 import _root_.circt.stage.ChiselStage
 
 object SCore {
@@ -60,7 +60,6 @@ class SCore(p: Parameters) extends Module {
 
   val lsu = Lsu(p)
   val matrixcore = Option.when(p.enableMatrix)(Module(new MatrixCore(p)))
-  val matrixRespShim = Option.when(p.enableMatrix)(Module(new MatrixDbusRespShim(p)))
   
   val fault_manager = Module(new FaultManager(p))
   val retirement_buffer = Module(new RetirementBuffer(p, mini = !p.useRetirementBuffer))
@@ -265,7 +264,6 @@ class SCore(p: Parameters) extends Module {
   io.fault  := csr.io.fault
   io.wfi    := csr.io.wfi
   csr.io.irq := io.irq
-
 
   // ---------------------------------------------------------------------------
   // Load/Store Unit
@@ -503,37 +501,11 @@ class SCore(p: Parameters) extends Module {
   lsu.io.ibus.fault := MakeInvalid(new FaultInfo(p))
 
   // ---------------------------------------------------------------------------
-  // Local Data Bus Port
+  // Local Data Bus Port (LSU owns dbus; matrix mem is muxed inside LSU when enabled)
+  io.dbus <> lsu.io.dbus
   if (p.enableMatrix) {
-    val useMatrix = matrixcore.get.io.active
-
-    io.dbus.valid := Mux(useMatrix, matrixcore.get.io.dbus.valid, lsu.io.dbus.valid)
-    io.dbus.write := Mux(useMatrix, matrixcore.get.io.dbus.write, lsu.io.dbus.write)
-    io.dbus.pc := Mux(useMatrix, matrixcore.get.io.dbus.pc, lsu.io.dbus.pc)
-    io.dbus.addr := Mux(useMatrix, matrixcore.get.io.dbus.addr, lsu.io.dbus.addr)
-    io.dbus.adrx := Mux(useMatrix, matrixcore.get.io.dbus.adrx, lsu.io.dbus.adrx)
-    io.dbus.size := Mux(useMatrix, matrixcore.get.io.dbus.size, lsu.io.dbus.size)
-    io.dbus.wdata := Mux(useMatrix, matrixcore.get.io.dbus.wdata, lsu.io.dbus.wdata)
-    io.dbus.wmask := Mux(useMatrix, matrixcore.get.io.dbus.wmask, lsu.io.dbus.wmask)
-
-    lsu.io.dbus.ready := Mux(useMatrix, false.B, io.dbus.ready)
-    matrixcore.get.io.dbus.ready := Mux(useMatrix, io.dbus.ready, false.B)
-    lsu.io.dbus.rdata := io.dbus.rdata
-    matrixcore.get.io.dbus.rdata := io.dbus.rdata
-
-    // Matrix-local response shim:
-    // - request side already arbitrated onto io.dbus
-    // - response side is explicit valid/data into matrixcore
-    // This shim currently provides a fixed-latency valid pulse (configured by
-    // p.matrixRespLatencyCycles), and can be replaced by a real harness path.
-    matrixRespShim.get.io.useMatrix := useMatrix
-    matrixRespShim.get.io.dbusValid := io.dbus.valid
-    matrixRespShim.get.io.dbusReady := io.dbus.ready
-    matrixRespShim.get.io.dbusWrite := io.dbus.write
-    matrixRespShim.get.io.dbusRdata := io.dbus.rdata
-    matrixcore.get.io.dbusResp := matrixRespShim.get.io.resp
-  } else {
-    io.dbus <> lsu.io.dbus
+    lsu.io.matrixMem.get.req <> matrixcore.get.io.mem.req
+    matrixcore.get.io.mem.resp := lsu.io.matrixMem.get.resp
   }
   io.ebus <> lsu.io.ebus
 

@@ -17,6 +17,7 @@ package coralnpu
 import chisel3._
 import chisel3.util._
 import common._
+import coralnpu.matrix.{MatrixDbusReq, MatrixMemResp}
 import coralnpu.rvv._
 
 class DFlushFenceiIO(p: Parameters) extends DFlushIO(p) {
@@ -59,6 +60,12 @@ class Lsu(p: Parameters) extends Module {
     val queueCapacity = Output(UInt(3.W))
     val active = Output(Bool())
     val storeComplete = Output(Valid(UInt(32.W)))
+
+    /** Matrix engine memory (only when `p.enableMatrix`); LSU muxes onto `dbus`. */
+    val matrixMem = Option.when(p.enableMatrix)(new Bundle {
+      val req = Flipped(Decoupled(new MatrixDbusReq(p)))
+      val resp = Valid(new MatrixMemResp(p.lsuDataBits))
+    })
   })
 }
 
@@ -939,6 +946,35 @@ class LsuV2(p: Parameters) extends Lsu(p) {
   val slot_dbus_wdata = Cat(wdata.reverse)
   val slot_dbus_wmask = Cat(wmask.reverse)
 
+  // Matrix requests share `dbus` with the LSU slot path (slot has priority when both want dbus).
+  val grantMatrix = WireDefault(false.B)
+  val matrix_dbus_write = WireDefault(false.B)
+  val matrix_dbus_pc = WireDefault(0.U(32.W))
+  val matrix_dbus_addr = WireDefault(0.U(32.W))
+  val matrix_dbus_adrx = WireDefault(0.U(32.W))
+  val matrix_dbus_size = WireDefault(0.U(p.dbusSize.W))
+  val matrix_dbus_wdata = WireDefault(0.U(p.lsuDataBits.W))
+  val matrix_dbus_wmask = WireDefault(0.U((p.lsuDataBits / 8).W))
+  if (p.enableMatrix) {
+    val mreq = io.matrixMem.get.req
+    val matrixOk = mreq.valid && !faultReg.valid
+    grantMatrix := matrixOk && !slot_dbus_valid
+    mreq.ready := grantMatrix && io.dbus.ready
+    matrix_dbus_write := mreq.bits.write
+    matrix_dbus_pc := mreq.bits.pc
+    matrix_dbus_addr := mreq.bits.addr
+    matrix_dbus_adrx := mreq.bits.addr
+    matrix_dbus_size := mreq.bits.size
+    matrix_dbus_wdata := mreq.bits.wdata
+    matrix_dbus_wmask := mreq.bits.wmask
+
+    val matrixReadFire = grantMatrix && io.dbus.ready && !mreq.bits.write
+    val matrixRdataReg = RegEnable(io.dbus.rdata, matrixReadFire)
+    io.matrixMem.get.resp.valid := RegNext(matrixReadFire, false.B)
+    io.matrixMem.get.resp.bits.rdata := matrixRdataReg
+    io.matrixMem.get.resp.bits.error := false.B
+  }
+
   // ebus data path (slot pipeline)
   val slot_ebus_valid = (external || peri) && Mux(slot.store,
                                                   slot.activeTransaction(),
@@ -952,15 +988,15 @@ class LsuV2(p: Parameters) extends Lsu(p) {
   val slot_ebus_pc = slot.pc
   val slot_ebus_internal = peri
 
-  // dbus data path
-  io.dbus.valid := slot_dbus_valid
-  io.dbus.write := slot_dbus_write
-  io.dbus.pc := slot_dbus_pc
-  io.dbus.addr := slot_dbus_addr
-  io.dbus.adrx := slot_dbus_adrx
-  io.dbus.size := slot_dbus_size
-  io.dbus.wdata := slot_dbus_wdata
-  io.dbus.wmask := slot_dbus_wmask
+  // dbus data path (slot and optional matrix)
+  io.dbus.valid := grantMatrix || slot_dbus_valid
+  io.dbus.write := Mux(grantMatrix, matrix_dbus_write, slot_dbus_write)
+  io.dbus.pc := Mux(grantMatrix, matrix_dbus_pc, slot_dbus_pc)
+  io.dbus.addr := Mux(grantMatrix, matrix_dbus_addr, slot_dbus_addr)
+  io.dbus.adrx := Mux(grantMatrix, matrix_dbus_adrx, slot_dbus_adrx)
+  io.dbus.size := Mux(grantMatrix, matrix_dbus_size, slot_dbus_size)
+  io.dbus.wdata := Mux(grantMatrix, matrix_dbus_wdata, slot_dbus_wdata)
+  io.dbus.wmask := Mux(grantMatrix, matrix_dbus_wmask, slot_dbus_wmask)
 
   // ebus data path
   io.ebus.dbus.valid := slot_ebus_valid
@@ -975,19 +1011,21 @@ class LsuV2(p: Parameters) extends Lsu(p) {
 
   val ibusFired = io.ibus.valid && io.ibus.ready
   val dbusFired = io.dbus.valid && io.dbus.ready
+  val lsuDbusFired = dbusFired && !grantMatrix
   val ebusFired = io.ebus.dbus.valid && io.ebus.dbus.ready
   assert(PopCount(Seq(ibusFired, dbusFired, ebusFired)) <= 1.U)
-  val slotFired = ebusFired || dbusFired || ibusFired
+  val slotFired = ebusFired || lsuDbusFired || ibusFired
 
-  val readFiredValid = ibusFired || (dbusFired && !io.dbus.write) || (ebusFired && !io.ebus.dbus.write)
+  val readFiredValid = ibusFired || (lsuDbusFired && !io.dbus.write) ||
+      (ebusFired && !io.ebus.dbus.write)
   readFired := MakeValid(readFiredValid,
     MuxCase(readFired.bits, Seq(
       (ibusFired) -> LsuRead(LsuBus.IBUS, targetLine.bits),
-      (dbusFired && !io.dbus.write) -> LsuRead(LsuBus.DBUS, targetLine.bits),
+      (lsuDbusFired && !io.dbus.write) -> LsuRead(LsuBus.DBUS, targetLine.bits),
       (ebusFired && !io.ebus.dbus.write) -> LsuRead(LsuBus.EXTERNAL, targetLine.bits),
     )))
 
-  // Matrix FSM is fully contained inside `matrixCore`.
+  // Matrix load/store FSM lives in `matrixCore`; LSU muxes its dbus beats and returns reads.
 
   // Fault handling
   val ibusFault = Wire(Valid(new FaultInfo(p)))

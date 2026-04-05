@@ -64,7 +64,7 @@ class MatrixBackend(p: coralnpu.Parameters) extends Module {
   private val aIdxW = math.max(1, log2Ceil(math.max(aBytes, 1)))
   private val bIdxW = math.max(1, log2Ceil(math.max(bBytes, 1)))
 
-  val io = IO(new MatrixCoreIO(dataBits))
+  val io = IO(new MatrixCoreIO(p))
 
   val cmdQ = Module(new Queue(new MatrixCmd, 8))
   cmdQ.io.enq <> io.cmd
