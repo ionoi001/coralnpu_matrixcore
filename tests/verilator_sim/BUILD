@@ -91,6 +91,13 @@ coralnpu_v2_binary(
     visibility = ["//visibility:public"],
 )
 
+coralnpu_v2_binary(
+    name = "matrix8x8k4_matmul_golden_demo",
+    srcs = ["coralnpu/matrix8x8k4_matmul_golden_demo.c"],
+    hdrs = ["coralnpu/coralnpu_matrix_insn.h"],
+    visibility = ["//visibility:public"],
+)
+
 cc_library(
     name = "elf",
     srcs = [

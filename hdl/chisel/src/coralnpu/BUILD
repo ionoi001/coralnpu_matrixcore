@@ -595,6 +595,34 @@ chisel_cc_library(
     vopts = CORE_MINI_AXI_VOPTS,
 )
 
+# Matrix-enabled core (16x16x48): full 16x16x48 tile in one MAC.
+chisel_cc_library(
+    name = "coralnpu_matrix16x16k48_core_axi_cc_library",
+    chisel_lib = ":coralnpu",
+    emit_class = "coralnpu.EmitCore",
+    extra_outs = [
+        "VCoralNpuMatrix16x16k48CoreAxi_parameters.h",
+        "CoralNpuMatrix16x16k48CoreAxi.zip",
+    ],
+    gen_flags = [
+        "--enableFetchL0=False",
+        "--fetchDataBits=128",
+        "--lsuDataBits=128",
+        "--enableRvv=False",
+        "--enableMatrix=True",
+        "--enableFloat=False",
+        "--matrixM=16",
+        "--matrixN=16",
+        "--matrixK=48",
+        "--matrixRespLatencyCycles=1",
+        "--moduleName=CoralNpuMatrix16x16k48Core",
+        "--useAxi",
+    ],
+    module_name = "CoralNpuMatrix16x16k48CoreAxi",
+    verilog_file_path = "CoralNpuMatrix16x16k48CoreAxi.sv",
+    vopts = CORE_MINI_AXI_VOPTS,
+)
+
 template_rule(
     chisel_cc_library,
     {

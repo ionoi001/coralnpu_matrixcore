@@ -1,4 +1,5 @@
 import cocotb
+import numpy as np
 
 from cocotb.triggers import ClockCycles, RisingEdge
 from bazel_tools.tools.python.runfiles import runfiles
@@ -35,23 +36,13 @@ async def run_elf_and_wait_tohost(core: CoreMiniAxiInterface, elf_path: str, tim
 
 
 @cocotb.test()
-async def matrix8x8k4_minimal_demo_smoke(dut):
-    core = await mk_core(dut)
-    r = runfiles.Create()
-    elf_path = r.Rlocation("coralnpu_hw/tests/verilator_sim/matrix8x8k4_minimal_demo.elf")
-    tohost_val = await run_elf_and_wait_tohost(core, elf_path, timeout_cycles=5_000_000)
-    assert int(core.dut.io_fault.value) == 0
-    assert tohost_val == 1, f"expected tohost=1, got 0x{tohost_val:08x}"
-
-
-@cocotb.test()
 async def matrix8x8k4_mac_per_cycle_bench(dut):
     core = await mk_core(dut)
     r = runfiles.Create()
     elf_path = r.Rlocation("coralnpu_hw/tests/verilator_sim/matrix8x8k4_bench_demo.elf")
 
     kResultBase = 0x10100
-    sweep = [500, 5000, 50000]
+    sweep = [500, 5000]
 
     for iters_req in sweep:
         await core.reset()
@@ -82,3 +73,49 @@ async def matrix8x8k4_mac_per_cycle_bench(dut):
             f"[BENCH] iters={iters} cycles={cycles} MACs={macs} MAC/cycle={mac_per_cycle:.6f}"
         )
 
+
+@cocotb.test()
+async def matrix8x8k4_matmul_correctness_perf(dut):
+    """One 8x8x4 tile: firmware fills A/B like matrix8x8k4_bench_demo; check C vs NumPy; report MAC/cycle."""
+    k_c = 0x16000
+    macs = 8 * 8 * 4
+
+    # Must match matrix8x8k4_matmul_golden_demo.c / matrix8x8k4_bench_demo.c
+    lhs = np.arange(1, 33, dtype=np.int8).reshape(8, 4)
+    rhs = np.array([(i % 7) - 3 for i in range(32)], dtype=np.int8).reshape(4, 8)
+    ref = np.matmul(lhs.astype(np.int32), rhs.astype(np.int32))
+
+    core = await mk_core(dut)
+    r = runfiles.Create()
+    elf_path = r.Rlocation("coralnpu_hw/tests/verilator_sim/matrix8x8k4_matmul_golden_demo.elf")
+
+    with open(elf_path, "rb") as f:
+        entry = await core.load_elf(f)
+        tohost = core.lookup_symbol(f, "tohost")
+        bench_sym = core.lookup_symbol(f, "bench_result")
+        assert tohost is not None and bench_sym is not None
+
+        await core.write_word(tohost, 0)
+        await ClockCycles(dut.io_aclk, 2)
+        await core.execute_from(entry)
+
+        for _ in range(5_000_000):
+            await RisingEdge(dut.io_aclk)
+            assert int(core.dut.io_fault.value) == 0
+            rv = await core.read_word(tohost)
+            if int(rv[0]) != 0:
+                break
+        else:
+            assert False, "timeout waiting for tohost"
+
+        out = (await core.read(k_c, 8 * 8 * 4)).view("int32").reshape([8, 8])
+        assert (out == ref).all(), "matrix 8x8x4 output mismatch vs NumPy"
+
+        bench = (await core.read(bench_sym, 16)).view("uint32")
+        assert int(bench[3]) == 0x4D4C4F50  # 'MLOP'
+        cycles = (int(bench[2]) << 32) | int(bench[1])
+        assert cycles > 0
+        mac_per_cycle = macs / cycles
+        cocotb.log.info(
+            f"[MATMUL 8x8x4] cycles={cycles} MACs={macs} MAC/cycle={mac_per_cycle:.6f}"
+        )

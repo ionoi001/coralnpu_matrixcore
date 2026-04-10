@@ -96,3 +96,4 @@ async def matrix4x4_minimal_demo_smoke(dut):
     await _assert_pass(core, "coralnpu_hw/tests/verilator_sim/matrix4x4_minimal_demo.elf")
 
 
+
