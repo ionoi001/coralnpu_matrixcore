@@ -968,10 +968,14 @@ class LsuV2(p: Parameters) extends Lsu(p) {
     matrix_dbus_wdata := mreq.bits.wdata
     matrix_dbus_wmask := mreq.bits.wmask
 
+    // DTCM read latency is 1 cycle: `io.dbus.rdata` for a read is valid the cycle *after*
+    // the dbus read handshake (`matrixReadFire`). Do not RegEnable(rdata, matrixReadFire)
+    // — that samples rdata on the request cycle (stale / previous line). Align `resp.valid`
+    // with the cycle where `io.dbus.rdata` matches the completed read.
     val matrixReadFire = grantMatrix && io.dbus.ready && !mreq.bits.write
-    val matrixRdataReg = RegEnable(io.dbus.rdata, matrixReadFire)
-    io.matrixMem.get.resp.valid := RegNext(matrixReadFire, false.B)
-    io.matrixMem.get.resp.bits.rdata := matrixRdataReg
+    val matrixReadRespValid = RegNext(matrixReadFire, false.B)
+    io.matrixMem.get.resp.valid := matrixReadRespValid
+    io.matrixMem.get.resp.bits.rdata := io.dbus.rdata
     io.matrixMem.get.resp.bits.error := false.B
   }
 

@@ -78,22 +78,8 @@ coralnpu_v2_binary(
 )
 
 coralnpu_v2_binary(
-    name = "matrix8x8k4_minimal_demo",
-    srcs = ["coralnpu/matrix8x8k4_minimal_demo.c"],
-    hdrs = ["coralnpu/coralnpu_matrix_insn.h"],
-    visibility = ["//visibility:public"],
-)
-
-coralnpu_v2_binary(
-    name = "matrix8x8k4_bench_demo",
-    srcs = ["coralnpu/matrix8x8k4_bench_demo.c"],
-    hdrs = ["coralnpu/coralnpu_matrix_insn.h"],
-    visibility = ["//visibility:public"],
-)
-
-coralnpu_v2_binary(
-    name = "matrix8x8k4_matmul_golden_demo",
-    srcs = ["coralnpu/matrix8x8k4_matmul_golden_demo.c"],
+    name = "matrix8x8k4_tile_correctness_demo",
+    srcs = ["coralnpu/matrix8x8k4_tile_correctness_demo.c"],
     hdrs = ["coralnpu/coralnpu_matrix_insn.h"],
     visibility = ["//visibility:public"],
 )

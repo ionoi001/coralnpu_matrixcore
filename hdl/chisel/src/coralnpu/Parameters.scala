@@ -181,8 +181,8 @@ object CoralNpuMatrixCoreParameters {
     p.enableFetchL0 = false
     p.fetchDataBits = 128
     p.lsuDataBits = 128
-    p.matrixM = 2
-    p.matrixN = 2
+    p.matrixM = 8
+    p.matrixN = 8
     p.matrixK = 4
     p.matrixRespLatencyCycles = 1
     p

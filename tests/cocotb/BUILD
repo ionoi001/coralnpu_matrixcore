@@ -50,9 +50,7 @@ COCOTB_TEST_BINARY_TARGETS = glob(["**/*.elf"]) + glob(["**/*.o"]) + [
     "//tests/verilator_sim:matrix_intentional_fail_demo.elf",
     "//tests/verilator_sim:matrix4x4_minimal_demo.elf",
     "//tests/verilator_sim:matrix4x4_bench_demo.elf",
-    "//tests/verilator_sim:matrix8x8k4_minimal_demo.elf",
-    "//tests/verilator_sim:matrix8x8k4_bench_demo.elf",
-    "//tests/verilator_sim:matrix8x8k4_matmul_golden_demo.elf",
+    "//tests/verilator_sim:matrix8x8k4_tile_correctness_demo.elf",
     "//tests/cocotb/rvv:rvv_matmul8x8k4_bench_demo.elf",
     "//tests/cocotb/scalar/ml_ops:scalar_matmul.elf",
 ]
@@ -107,7 +105,7 @@ verilator_cocotb_model(
 
 verilator_cocotb_model(
     name = "coralnpu_matrix8x8k4_core_axi_model",
-    trace = False,
+    trace = True,
     cflags = VERILATOR_BUILD_ARGS,
     hdl_toplevel = "CoralNpuMatrix8x8k4CoreAxi",
     verilog_source = "//hdl/chisel/src/coralnpu:CoralNpuMatrix8x8k4CoreAxi.sv",
@@ -131,8 +129,7 @@ CORALNPU_MATRIX4X4_CORE_AXI_SIM_TESTCASES = [
 
 # BEGIN_TESTCASES_FOR_coralnpu_matrix8x8k4_core_axi_sim_cocotb
 CORALNPU_MATRIX8X8K4_CORE_AXI_SIM_TESTCASES = [
-    "matrix8x8k4_mac_per_cycle_bench",
-    "matrix8x8k4_matmul_correctness_perf",
+    "matrix8x8k4_single_tile_correctness",
 ]
 # END_TESTCASES_FOR_coralnpu_matrix8x8k4_core_axi_sim_cocotb
 
@@ -257,6 +254,7 @@ template_rule(
                 CORE_MINI_AXI_SIM_COMMON_TEST_KWARGS,
                 hdl_toplevel = "CoralNpuMatrix8x8k4CoreAxi",
                 test_module = ["matrix/matrix8x8k4_sim.py"],
+                waves = True,
                 default_testcase_size = "medium",
                 size = "enormous",
             ),

@@ -189,6 +189,15 @@ class CoreMiniAxiInterface:
     self.csr_base_addr = csr_base_addr
     self.memory_base_addr = ext_mem_base_addr
     self.memory = np.zeros([ext_mem_size], dtype=np.uint8)
+    # #region agent log
+    # Debug-only counters to understand whether the DUT issues AXI master traffic.
+    # Kept small to avoid memory blow-ups in long sims.
+    self._agent_dbg_master_aw_addrs = []
+    self._agent_dbg_master_ar_addrs = []
+    self._agent_dbg_master_aw_count = 0
+    self._agent_dbg_master_w_count = 0
+    self._agent_dbg_master_ar_count = 0
+    # #endregion agent log
     self.master_arfifo = Queue()
     self.master_awfifo = Queue()
     self.master_rfifo = Queue()
@@ -313,6 +322,11 @@ class CoreMiniAxiInterface:
           ardata["len"] = self.dut.io_axi_master_read_addr_bits_len.value.to_unsigned()
           ardata["burst"] = self.dut.io_axi_master_read_addr_bits_burst.value.to_unsigned()
           await self.master_arfifo.put(ardata)
+          # #region agent log
+          self._agent_dbg_master_ar_count += 1
+          if len(self._agent_dbg_master_ar_addrs) < 32:
+            self._agent_dbg_master_ar_addrs.append(int(ardata["addr"]))
+          # #endregion agent log
         except Exception as e:
           print("X seen in master_aragent: " + str(e))
           raise e
@@ -326,6 +340,11 @@ class CoreMiniAxiInterface:
           awdata["size"] = self.dut.io_axi_master_write_addr_bits_size.value.to_unsigned()
           awdata["len"] = self.dut.io_axi_master_write_addr_bits_len.value.to_unsigned()
           await self.master_awfifo.put(awdata)
+          # #region agent log
+          self._agent_dbg_master_aw_count += 1
+          if len(self._agent_dbg_master_aw_addrs) < 32:
+            self._agent_dbg_master_aw_addrs.append(int(awdata["addr"]))
+          # #endregion agent log
         except Exception as e:
           print("X seen in master_awagent: " + str(e))
 
@@ -337,6 +356,9 @@ class CoreMiniAxiInterface:
           wdata["strb"] = self.dut.io_axi_master_write_data_bits_strb.value
           wdata["last"] = self.dut.io_axi_master_write_data_bits_last.value
           await self.master_wfifo.put(wdata)
+          # #region agent log
+          self._agent_dbg_master_w_count += 1
+          # #endregion agent log
         except Exception as e:
           print("X seen in master_wagent: " + str(e))
 

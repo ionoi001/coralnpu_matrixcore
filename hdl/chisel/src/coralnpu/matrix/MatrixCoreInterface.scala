@@ -62,8 +62,9 @@ class MatrixDbusReq(p: Parameters) extends Bundle {
 /**
   * Memory port between [[MatrixBackend]] / [[MatrixCore]] and LSU.
   *
-  * LSU owns `DBusIO`; it muxes these requests onto the bus and returns read data one cycle
-  * after each read handshake (same timing model as scalar dbus loads).
+  * LSU owns `DBusIO`; it muxes these requests onto the bus. For DTCM reads, `resp.valid`
+  * is asserted one cycle after the dbus read handshake, with `resp.bits.rdata` taken from
+  * `io.dbus.rdata` on that same cycle (matches 1-cycle DTCM read latency).
   */
 class MatrixMemIO(p: Parameters) extends Bundle {
   val req = Decoupled(new MatrixDbusReq(p))
